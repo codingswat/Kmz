@@ -85,6 +85,10 @@ Nothing aborts a batch. A corrupt file, a KMZ with no KML inside, a file with
 zero points, or a malformed coordinate produces a warning and is skipped; every
 other file still exports.
 
+The output folder must already exist. A hand-typed path that does not is
+reported before anything is written, rather than being created silently and
+leaving the workbook somewhere you would not think to look.
+
 ## Tests
 
 ```bash

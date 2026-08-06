@@ -13,7 +13,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from kmz_points.pipeline import LoadedFile, export_to_excel, load_file
+from kmz_points.pipeline import (
+    LoadedFile,
+    export_to_excel,
+    load_file,
+    validate_output_dir,
+)
 
 DROP_PROMPT = "Drag KML / KMZ files here"
 FILE_TYPES = [("KML and KMZ files", "*.kml *.kmz"), ("All files", "*.*")]
@@ -204,7 +209,14 @@ class App:
             self.status.set("No files loaded. Add KML or KMZ files first.")
             return
 
-        target = self.output_dir.get() or str(self.loaded[0].path.parent)
+        target = self.output_dir.get().strip() or str(self.loaded[0].path.parent)
+
+        problem = validate_output_dir(target)
+        if problem:
+            self.status.set(problem)
+            self.notify("error", "Cannot export", problem)
+            return
+
         try:
             summary = export_to_excel(self.loaded, target)
         except Exception as exc:  # a full-stop failure, e.g. unwritable folder

@@ -7,6 +7,7 @@ it could read, and reports the rest as warnings.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,27 @@ class LoadedFile:
     @property
     def ok(self) -> bool:
         return self.error is None
+
+
+def validate_output_dir(path: str | Path) -> str | None:
+    """Check a folder can receive the workbook.
+
+    Returns an error message, or None if the folder is usable. Deliberately
+    does not create anything -- a mistyped path should be reported, not
+    quietly built, or the workbook lands somewhere the user will not find it.
+    """
+    text = str(path).strip()
+    if not text:
+        return "Choose an output folder."
+
+    target = Path(text)
+    if not target.exists():
+        return f"Output folder does not exist: {target}"
+    if not target.is_dir():
+        return f"Output folder is not a folder: {target}"
+    if not os.access(target, os.W_OK):
+        return f"Output folder is not writable: {target}"
+    return None
 
 
 def load_file(path: str | Path) -> LoadedFile:
