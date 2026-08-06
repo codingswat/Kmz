@@ -13,8 +13,25 @@ import pytest
 from kmz_points.gui import parse_drop_payload
 from kmz_points.samples import write_samples
 
+def _tk_usable() -> bool:
+    """Can a window actually be created here?
+
+    Checking DISPLAY only works on X11 -- Windows and macOS runners have no
+    DISPLAY yet build windows fine, and skipping there would silently drop
+    GUI coverage on the two platforms we ship binaries for.
+    """
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+        root.destroy()
+        return True
+    except Exception:
+        return False
+
+
 pytestmark_gui = pytest.mark.skipif(
-    not os.environ.get("DISPLAY"), reason="no display available"
+    not _tk_usable(), reason="no usable Tk display available"
 )
 
 
