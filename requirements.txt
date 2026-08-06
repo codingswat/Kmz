@@ -1,0 +1,16 @@
+# Core
+lxml>=5.0            # KML parsing
+utm>=0.7             # UTM easting/northing + latitude band
+openpyxl>=3.1        # Excel output
+
+# Drag-and-drop. Optional: the GUI falls back to the Browse button if this
+# is missing or the platform's tkdnd library will not load.
+tkinterdnd2>=0.4
+
+# MGRS. The mgrs package imports packaging at runtime but does not declare
+# it as a dependency, so installing mgrs alone fails with ModuleNotFoundError.
+mgrs>=1.4
+packaging>=23.0
+
+# Tests
+pytest>=8.0

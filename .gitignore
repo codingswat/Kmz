@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Generated: recreate with `python -m kmz_points.cli --make-samples samples/`
+samples/
+*.xlsx
+
+# PyInstaller
+build/
+dist/
+*.spec

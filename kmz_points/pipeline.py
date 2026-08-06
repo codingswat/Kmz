@@ -1,0 +1,102 @@
+"""Orchestration: files in, one workbook out.
+
+Nothing here raises on bad input. A batch containing a corrupt file, a KMZ
+with no KML inside, or a document with zero points still exports every point
+it could read, and reports the rest as warnings.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from kmz_points.archive import ArchiveError, read_kml_bytes
+from kmz_points.excel import output_filename, write_workbook
+from kmz_points.kml_parser import parse_points
+from kmz_points.models import BatchSummary, Point
+from kmz_points.table import build_table_rows
+
+
+@dataclass
+class LoadedFile:
+    """One input file's contribution to the batch."""
+
+    path: Path
+    points: list[Point] = field(default_factory=list)
+    skipped: int = 0
+    warnings: list[str] = field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    @property
+    def point_count(self) -> int:
+        return len(self.points)
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+def load_file(path: str | Path) -> LoadedFile:
+    """Read and parse one file. Never raises."""
+    path = Path(path)
+
+    try:
+        data = read_kml_bytes(path)
+    except ArchiveError as exc:
+        return LoadedFile(path=path, error=str(exc))
+    except Exception as exc:  # unreadable for a reason we did not anticipate
+        return LoadedFile(path=path, error=f"{path.name}: {exc}")
+
+    result = parse_points(data, path.name)
+    return LoadedFile(
+        path=path,
+        points=result.points,
+        skipped=result.skipped,
+        warnings=list(result.warnings),
+    )
+
+
+def export_to_excel(
+    loaded: list[LoadedFile],
+    output_dir: str | Path,
+    when: datetime | None = None,
+) -> BatchSummary:
+    """Write every loaded point into one workbook and summarise the batch."""
+    output_dir = Path(output_dir)
+    summary = BatchSummary()
+
+    points: list[Point] = []
+    for item in loaded:
+        if item.ok:
+            summary.files_read += 1
+            summary.features_skipped += item.skipped
+            points.extend(item.points)
+        else:
+            summary.files_failed += 1
+            summary.warnings.append(item.error or f"{item.name}: failed")
+        summary.warnings.extend(item.warnings)
+
+    summary.points_extracted = len(points)
+
+    if not points:
+        summary.warnings.append("No points found; nothing was written.")
+        return summary
+
+    destination = output_dir / output_filename(when)
+    write_workbook(build_table_rows(points), destination)
+    summary.output_path = str(destination)
+    return summary
+
+
+def run(
+    paths: list[str | Path],
+    output_dir: str | Path,
+    when: datetime | None = None,
+) -> BatchSummary:
+    """Load every path and export in one call."""
+    return export_to_excel([load_file(p) for p in paths], output_dir, when)
