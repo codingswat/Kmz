@@ -1,5 +1,7 @@
 """Pipeline tests, including a full end-to-end run over generated samples."""
 
+from pathlib import Path
+
 import openpyxl
 import pytest
 
@@ -78,7 +80,10 @@ class TestExport:
         loaded = [load_file(p) for p in samples]
         summary = export_to_excel(loaded, tmp_path)
         assert summary.output_path is not None
-        name = summary.output_path.rsplit("/", 1)[-1]
+        # Path().name rather than splitting on "/" -- Windows separates with a
+        # backslash, so the split returned the whole path and the assertion
+        # compared "points_" against a drive letter.
+        name = Path(summary.output_path).name
         assert name.startswith("points_") and name.endswith(".xlsx")
 
     def test_summary_counts_every_file_and_point(self, samples, tmp_path):
