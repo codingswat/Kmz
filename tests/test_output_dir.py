@@ -6,10 +6,17 @@ error.
 """
 
 import os
+import sys
 
 import pytest
 
 from kmz_points.pipeline import validate_output_dir
+
+# Both are read by skipif decorators, which run at collection time -- so
+# os.geteuid, which does not exist on Windows, cannot be called unguarded
+# there or the whole module fails to import.
+ON_WINDOWS = sys.platform == "win32"
+AS_ROOT = not ON_WINDOWS and os.geteuid() == 0
 
 
 class TestAcceptsUsableFolders:
@@ -45,7 +52,12 @@ class TestRejectsUnusableFolders:
         assert validate_output_dir(deep) is not None
         assert not deep.exists(), "validation must not create the folder"
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses write permissions")
+    @pytest.mark.skipif(AS_ROOT, reason="root bypasses write permissions")
+    @pytest.mark.skipif(
+        ON_WINDOWS,
+        reason="Windows ignores the mkdir mode, and os.access does not consult "
+        "directory ACLs, so a locked folder still reports as writable",
+    )
     def test_unwritable_folder_is_rejected(self, tmp_path):
         locked = tmp_path / "locked"
         locked.mkdir(mode=0o500)
