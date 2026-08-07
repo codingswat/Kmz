@@ -52,7 +52,32 @@ jobs:
 
       - name: Run tests
         if: runner.os != 'Linux'
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          python -m pytest -q 2>&1 | tee pytest-output.txt
+          exit ${PIPESTATUS[0]}
+
+      # Downloading a job log needs repository admin rights, but annotations are
+      # readable by anyone. Republishing the tail of pytest's output as an
+      # annotation makes a failure here diagnosable without that access.
+      - name: Surface the pytest failure
+        if: failure() && runner.os != 'Linux'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib
+
+          report = pathlib.Path("pytest-output.txt")
+          if not report.exists():
+              print("::error title=pytest::no output was captured")
+              raise SystemExit
+
+          # Annotations cap out well under pytest's full chatter, and the
+          # summary that names the failures is at the end.
+          tail = report.read_text(errors="replace")[-4000:]
+          escaped = tail.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print(f"::error title=pytest failure::{escaped}")
+          PY
 
       - name: Build
         run: pyinstaller build.spec --noconfirm
