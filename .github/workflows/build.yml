@@ -21,7 +21,12 @@ jobs:
           - os: macos-latest
             label: macOS (Apple Silicon)
             artifact: KmzPoints-macos-arm64
-          - os: macos-13
+          # macos-13 was the old free Intel runner and has been removed from
+          # the hosted image list, so this job sat queued forever rather than
+          # failing -- and because the release job needs it, tagging a version
+          # would have hung instead of publishing. macos-15-intel is the
+          # current x86_64 label.
+          - os: macos-15-intel
             label: macOS (Intel)
             artifact: KmzPoints-macos-x86_64
           - os: ubuntu-latest
