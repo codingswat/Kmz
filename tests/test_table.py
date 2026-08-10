@@ -2,26 +2,54 @@
 
 The column layout lives in one place so it can be re-ordered later; these
 tests pin the contract that layout has to satisfy.
+
+The sheet now has 23 columns split into four labelled bands (separation,
+Combined D,M,S, separated D,M,S, details), and several headers repeat across
+bands -- "longitude"/"latitude" appear in both the separation and Combined
+bands, and "D"/"M"/"S" appear twice within the separated band, once for
+latitude and once for longitude. ``column_index`` from kmz_points.table is
+used instead of a local duplicate so a repeated header must be disambiguated
+by band, the same rule the production code enforces.
 """
 
 from kmz_points.models import Point
-from kmz_points.table import COLUMNS, build_table_rows, headers
+from kmz_points.table import (
+    COMBINED,
+    DETAILS,
+    SEPARATED,
+    SEPARATION,
+    COLUMNS,
+    build_table_rows,
+    column_index,
+    headers,
+)
 
+# Mirrors COLUMNS exactly, duplicates included, so test_headers_match_the_
+# specified_layout pins the full 23-column order without importing COLUMNS
+# itself.
 EXPECTED_HEADERS = [
-    "No.",
+    "longitude",
+    "latitude",
+    "elevation",
+    "#",
+    "longitude",
+    "latitude",
+    "lat",
+    "D",
+    "M",
+    "S",
+    "long",
+    "D",
+    "M",
+    "S",
     "Name",
     "Description",
-    "Lat (DD)",
-    "Lon (DD)",
     "Lat (DDM)",
     "Lon (DDM)",
-    "Lat (DMS)",
-    "Lon (DMS)",
     "UTM Zone",
     "Easting (m)",
     "Northing (m)",
     "MGRS",
-    "Altitude (m)",
     "Source File",
 ]
 
@@ -35,10 +63,6 @@ def make_point(lat=34.567890, lon=38.123456, alt=120.5, name="Alpha", source="a.
         alt=alt,
         source_file=source,
     )
-
-
-def column_index(header):
-    return EXPECTED_HEADERS.index(header)
 
 
 class TestHeaders:
@@ -63,7 +87,8 @@ class TestRowValues:
 
     def test_numbering_starts_at_one_and_increments(self):
         rows = build_table_rows([make_point(), make_point(), make_point()])
-        assert [r[column_index("No.")] for r in rows] == [1, 2, 3]
+        number = column_index("#", band=COMBINED)
+        assert [r[number] for r in rows] == [1, 2, 3]
 
     def test_name_and_source_are_carried_through(self):
         row = build_table_rows([make_point(name="Alpha", source="b.kmz")])[0]
@@ -74,24 +99,28 @@ class TestRowValues:
 class TestNumericCells:
     def test_decimal_degrees_are_floats_not_strings(self):
         row = build_table_rows([make_point()])[0]
-        assert row[column_index("Lat (DD)")] == 34.567890
-        assert row[column_index("Lon (DD)")] == 38.123456
-        assert isinstance(row[column_index("Lat (DD)")], float)
-        assert isinstance(row[column_index("Lon (DD)")], float)
+        lat = column_index("latitude", band=SEPARATION)
+        lon = column_index("longitude", band=SEPARATION)
+        assert row[lat] == 34.567890
+        assert row[lon] == 38.123456
+        assert isinstance(row[lat], float)
+        assert isinstance(row[lon], float)
 
     def test_easting_and_northing_are_integers(self):
         row = build_table_rows([make_point()])[0]
-        assert row[column_index("Easting (m)")] == 419595
-        assert row[column_index("Northing (m)")] == 3825474
-        assert isinstance(row[column_index("Easting (m)")], int)
+        easting = column_index("Easting (m)")
+        northing = column_index("Northing (m)")
+        assert row[easting] == 419595
+        assert row[northing] == 3825474
+        assert isinstance(row[easting], int)
 
     def test_altitude_is_a_float(self):
         row = build_table_rows([make_point(alt=120.5)])[0]
-        assert row[column_index("Altitude (m)")] == 120.5
+        assert row[column_index("elevation", band=SEPARATION)] == 120.5
 
     def test_missing_altitude_is_none_not_zero(self):
         row = build_table_rows([make_point(alt=None)])[0]
-        assert row[column_index("Altitude (m)")] is None
+        assert row[column_index("elevation", band=SEPARATION)] is None
 
 
 class TestFormattedTextCells:
@@ -102,8 +131,10 @@ class TestFormattedTextCells:
 
     def test_dms_columns_are_formatted_strings(self):
         row = build_table_rows([make_point()])[0]
-        assert row[column_index("Lat (DMS)")] == "34° 34' 4.40\" N"
-        assert row[column_index("Lon (DMS)")] == "38° 7' 24.44\" E"
+        lat = column_index("latitude", band=COMBINED)
+        lon = column_index("longitude", band=COMBINED)
+        assert row[lat] == "34° 34' 4.40\" N"
+        assert row[lon] == "38° 7' 24.44\" E"
 
     def test_utm_zone_carries_the_band_letter(self):
         row = build_table_rows([make_point()])[0]
@@ -128,3 +159,47 @@ class TestUndefinedConversions:
     def test_row_is_still_full_width_when_conversions_are_undefined(self):
         row = build_table_rows([make_point(lat=89.5, lon=10.0)])[0]
         assert len(row) == len(EXPECTED_HEADERS)
+
+
+class TestSeparatedDegreesMinutesSeconds:
+    """D/M/S are magnitudes -- degrees cannot carry a sign for a value between
+    -1 and 0 -- so the hemisphere lives in the repeated decimal column beside
+    them instead. Uses the same latitude as the "Bravo" sample point
+    (-0.180653): south, but with a whole-degree part of 0, which has no sign
+    of its own."""
+
+    def test_lat_degrees_are_a_magnitude_even_when_south(self):
+        row = build_table_rows([make_point(lat=-0.180653, lon=-78.467834)])[0]
+        lat = column_index("lat", band=SEPARATED)
+        d, m, s = lat + 1, lat + 2, lat + 3
+        assert row[d] == 0
+        assert row[m] == 10
+        assert row[s] == 50.35
+        assert row[d] >= 0 and row[m] >= 0 and row[s] >= 0
+
+    def test_the_repeated_decimal_keeps_the_sign(self):
+        row = build_table_rows([make_point(lat=-0.180653, lon=-78.467834)])[0]
+        lat = column_index("lat", band=SEPARATED)
+        assert row[lat] == -0.180653
+        assert row[lat] < 0
+
+    def test_lon_degrees_are_also_a_magnitude(self):
+        row = build_table_rows([make_point(lat=-0.180653, lon=-78.467834)])[0]
+        long_ = column_index("long", band=SEPARATED)
+        d, m, s = long_ + 1, long_ + 2, long_ + 3
+        assert row[d] == 78
+        assert row[m] == 28
+        assert row[s] == 4.2
+        assert row[long_] == -78.467834
+        assert row[long_] < 0
+
+    def test_a_positive_point_still_matches_its_magnitude(self):
+        # Guards against a test that would pass merely because abs() and the
+        # signed value happen to look the same for a negative-only check.
+        row = build_table_rows([make_point(lat=34.567890, lon=38.123456)])[0]
+        lat = column_index("lat", band=SEPARATED)
+        long_ = column_index("long", band=SEPARATED)
+        assert row[lat + 1] == 34
+        assert row[long_ + 1] == 38
+        assert row[lat] == 34.567890
+        assert row[long_] == 38.123456

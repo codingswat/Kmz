@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from kmz_points.pipeline import (
     LoadedFile,
@@ -22,6 +22,96 @@ from kmz_points.pipeline import (
 
 DROP_PROMPT = "Drag KML / KMZ files here"
 FILE_TYPES = [("KML and KMZ files", "*.kml *.kmz"), ("All files", "*.*")]
+
+# Visual tokens, kept together so the window can be restyled without hunting
+# hex codes through the layout code.
+_INK = "#1f2933"  # primary text
+_MUTED = "#6b7785"  # hints, section labels
+_PAGE = "#f2f4f7"  # window background
+_SURFACE = "#ffffff"  # raised areas: the file list
+_BORDER = "#d5dce5"
+_DROP_FILL = "#eaf2fd"
+_DROP_EDGE = "#a9c6e8"
+_ACCENT = "#2563eb"
+_ACCENT_LIT = "#1d4ed8"
+_SELECTION = "#dbeafe"
+
+_GAP = 8  # spacing unit; every pad below is a multiple of it
+
+
+def _scaled(base: tkfont.Font, factor: float, weight: str = "normal") -> tkfont.Font:
+    """A copy of the platform's default font at a different size.
+
+    Tk reports negative sizes in pixels and positive ones in points, and
+    scaling by a factor keeps the right sign either way -- hard-coding a size
+    would be tiny on one platform and oversized on another.
+    """
+    font = base.copy()
+    font.configure(size=int(base.cget("size") * factor), weight=weight)
+    return font
+
+
+def _apply_theme(root: tk.Misc) -> None:
+    """Style the ttk widgets.
+
+    'clam' is used on every platform rather than each one's native theme,
+    because the native themes -- aqua in particular -- ignore requested
+    button colours, and the accent on the export button is what marks it out
+    as the action the window is for.
+    """
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:  # a Tcl build without clam; native styling still works
+        pass
+
+    base = tkfont.nametofont("TkDefaultFont")
+
+    style.configure(".", background=_PAGE, foreground=_INK, font=base)
+    style.configure("TFrame", background=_PAGE)
+    style.configure("TLabel", background=_PAGE, foreground=_INK)
+    style.configure("Section.TLabel", foreground=_MUTED, font=_scaled(base, 0.9))
+    style.configure("Status.TLabel", foreground=_MUTED, font=_scaled(base, 0.9))
+
+    style.configure(
+        "TButton",
+        background=_SURFACE,
+        foreground=_INK,
+        bordercolor=_BORDER,
+        focuscolor=_ACCENT,
+        borderwidth=1,
+        padding=(12, 6),
+    )
+    style.map(
+        "TButton",
+        background=[("pressed", _SELECTION), ("active", "#eef1f5")],
+        bordercolor=[("active", _DROP_EDGE)],
+    )
+
+    style.configure(
+        "Accent.TButton",
+        background=_ACCENT,
+        foreground="#ffffff",
+        bordercolor=_ACCENT,
+        borderwidth=0,
+        padding=(12, 10),
+        font=_scaled(base, 1.0, weight="bold"),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[("pressed", _ACCENT_LIT), ("active", _ACCENT_LIT)],
+        foreground=[("disabled", "#e5e7eb")],
+    )
+
+    style.configure(
+        "TEntry",
+        fieldbackground=_SURFACE,
+        bordercolor=_BORDER,
+        insertcolor=_INK,
+        padding=6,
+    )
+    style.map("TEntry", bordercolor=[("focus", _ACCENT)])
+    style.configure("TSeparator", background=_BORDER)
 
 # tkdnd hands over a space-separated list, brace-quoting any entry that
 # contains a space: "{/tmp/my places.kml} /tmp/b.kmz"
@@ -75,11 +165,24 @@ class App:
     # ------------------------------------------------------------------ UI
 
     def _build_widgets(self):
-        outer = ttk.Frame(self.root, padding=12)
+        _apply_theme(self.root)
+        self.root.configure(background=_PAGE)
+        base = tkfont.nametofont("TkDefaultFont")
+
+        outer = ttk.Frame(self.root, padding=_GAP * 2)
         outer.pack(fill="both", expand=True)
 
+        # A flat hairline rather than a ridge bevel: highlightthickness draws
+        # the border without the 3D groove, which reads as a target area
+        # instead of a sunken panel.
         drop_frame = tk.Frame(
-            outer, height=120, relief="ridge", borderwidth=2, background="#f4f6f8"
+            outer,
+            height=_GAP * 17,
+            background=_DROP_FILL,
+            highlightbackground=_DROP_EDGE,
+            highlightcolor=_DROP_EDGE,
+            highlightthickness=1,
+            borderwidth=0,
         )
         drop_frame.pack(fill="x")
         drop_frame.pack_propagate(False)
@@ -88,57 +191,84 @@ class App:
         self.drop_label = tk.Label(
             drop_frame,
             text=DROP_PROMPT,
-            background="#f4f6f8",
-            foreground="#33475b",
-            font=("TkDefaultFont", 13, "bold"),
+            background=_DROP_FILL,
+            foreground=_INK,
+            font=_scaled(base, 1.35, weight="bold"),
         )
-        self.drop_label.pack(expand=True)
+        self.drop_label.pack(expand=True, pady=(_GAP * 2, 0))
 
         self.drop_hint = tk.Label(
             drop_frame,
             text="or use Browse below",
-            background="#f4f6f8",
-            foreground="#7b8794",
+            background=_DROP_FILL,
+            foreground=_MUTED,
+            font=_scaled(base, 0.9),
         )
-        self.drop_hint.pack(pady=(0, 10))
+        self.drop_hint.pack(pady=(_GAP // 2, _GAP * 2))
 
         buttons = ttk.Frame(outer)
-        buttons.pack(fill="x", pady=(10, 6))
+        buttons.pack(fill="x", pady=(_GAP * 2, 0))
         ttk.Button(buttons, text="Browse...", command=self.browse).pack(side="left")
         ttk.Button(buttons, text="Remove selected", command=self.remove_selected).pack(
-            side="left", padx=6
+            side="left", padx=_GAP
         )
         ttk.Button(buttons, text="Clear all", command=self.clear_all).pack(side="left")
 
-        ttk.Label(outer, text="Loaded files").pack(anchor="w", pady=(8, 2))
-        list_frame = ttk.Frame(outer)
+        ttk.Label(outer, text="LOADED FILES", style="Section.TLabel").pack(
+            anchor="w", pady=(_GAP * 2, _GAP // 2)
+        )
+        list_frame = tk.Frame(
+            outer,
+            background=_SURFACE,
+            highlightbackground=_BORDER,
+            highlightcolor=_BORDER,
+            highlightthickness=1,
+            borderwidth=0,
+        )
         list_frame.pack(fill="both", expand=True)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
         self.file_list = tk.Listbox(
-            list_frame, selectmode="extended", yscrollcommand=scrollbar.set, height=10
+            list_frame,
+            selectmode="extended",
+            yscrollcommand=scrollbar.set,
+            height=10,
+            background=_SURFACE,
+            foreground=_INK,
+            selectbackground=_SELECTION,
+            selectforeground=_INK,
+            borderwidth=0,
+            highlightthickness=0,
+            activestyle="none",  # the dotted underline reads as a rendering fault
         )
         scrollbar.config(command=self.file_list.yview)
         scrollbar.pack(side="right", fill="y")
-        self.file_list.pack(side="left", fill="both", expand=True)
+        self.file_list.pack(
+            side="left", fill="both", expand=True, padx=_GAP // 2, pady=_GAP // 2
+        )
 
+        ttk.Label(outer, text="OUTPUT FOLDER", style="Section.TLabel").pack(
+            anchor="w", pady=(_GAP * 2, _GAP // 2)
+        )
         output_row = ttk.Frame(outer)
-        output_row.pack(fill="x", pady=(10, 6))
-        ttk.Label(output_row, text="Output folder").pack(side="left")
+        output_row.pack(fill="x")
         ttk.Entry(output_row, textvariable=self.output_dir).pack(
-            side="left", fill="x", expand=True, padx=6
+            side="left", fill="x", expand=True
         )
         ttk.Button(output_row, text="Choose...", command=self.choose_output_dir).pack(
-            side="left"
+            side="left", padx=(_GAP, 0)
         )
 
-        ttk.Button(outer, text="Export to Excel", command=self.export).pack(
-            fill="x", pady=(6, 8), ipady=4
-        )
+        ttk.Button(
+            outer,
+            text="Export to Excel",
+            command=self.export,
+            style="Accent.TButton",
+        ).pack(fill="x", pady=(_GAP * 2, _GAP * 2))
 
         ttk.Separator(outer).pack(fill="x")
-        ttk.Label(outer, textvariable=self.status, anchor="w").pack(
-            fill="x", pady=(6, 0)
-        )
+        ttk.Label(
+            outer, textvariable=self.status, anchor="w", style="Status.TLabel"
+        ).pack(fill="x", pady=(_GAP, 0))
 
     def _enable_drop(self):
         if not self.dnd_available:

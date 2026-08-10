@@ -79,8 +79,12 @@ def run_selftest() -> tuple[int, str]:
             import openpyxl
 
             if summary and summary.output_path:
+                from kmz_points.excel import data_rows
+
                 sheet = openpyxl.load_workbook(summary.output_path).active
-                rows = sheet.max_row - 1
+                # Not max_row: the sheet has three header rows and one banner
+                # per source file, so its height is not the point count.
+                rows = len(data_rows(sheet))
                 record("excel", rows == _EXPECTED_ROWS, f"{rows} rows read back")
             else:
                 record("excel", False, "no workbook was written")

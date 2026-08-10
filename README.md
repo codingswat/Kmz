@@ -1,8 +1,8 @@
 # KML / KMZ Point Extractor
 
-Desktop app that pulls every point out of KML and KMZ files, converts each one
-into five coordinate formats, and writes the whole batch to a single Excel
-table.
+Desktop app that pulls every point and every area out of KML and KMZ files,
+converts each one into five coordinate formats, measures each area, and writes
+the whole batch to a single Excel workbook.
 
 ## Install
 
@@ -39,17 +39,48 @@ python -m kmz_points.cli file1.kml file2.kmz -o /path/to/output
 python -m kmz_points.cli --make-samples samples/     # generate demo inputs
 ```
 
+There is also a small LAN web service, for colleagues who would rather use a
+browser than install the app — see
+[BUILDING.md](BUILDING.md#running-the-service-for-colleagues) for how to
+start it.
+
 ## Output
 
-One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point:
+One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point,
+in 23 columns grouped into four labelled bands:
 
-| No. | Name | Description | Lat (DD) | Lon (DD) | Lat (DDM) | Lon (DDM) | Lat (DMS) | Lon (DMS) | UTM Zone | Easting (m) | Northing (m) | MGRS | Altitude (m) | Source File |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Band | Columns |
+|---|---|
+| separation (decimal degrees) | longitude, latitude, elevation |
+| Combined D,M,S | #, longitude, latitude |
+| separated D,M,S | lat, D, M, S, long, D, M, S |
+| details | Name, Description, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
 
-The header is bold and frozen, and column widths are fitted to content.
-`Lat (DD)`, `Lon (DD)`, `Easting (m)`, `Northing (m)` and `Altitude (m)` are
-stored as real numbers so they sort and work in formulas; the DDM, DMS, UTM
-Zone and MGRS columns are formatted text.
+The sheet has three header rows above the data: a merged title per band, a
+merged caption beneath it (only "separation" has one, captioned "decimal
+degrees" — every other band's title just claims both rows instead), then the
+column names on the third row. Data starts on row 4, and the sheet is frozen
+below all three header rows so they stay in view while scrolling. A grey
+banner spanning every column names each source file, directly above its group
+of rows — including when the batch came from a single file.
+
+The band titles and the column names are bold; the caption row is not. Column
+widths are fitted to content.
+`longitude`, `latitude`, `elevation`, `#`, the numeric `lat`/`long` columns
+and their `D`/`M`/`S` breakdowns, `Easting (m)` and `Northing (m)` are stored
+as real numbers so they sort and work in formulas; the combined D,M,S text,
+`Name`, `Description`, the DDM columns, `UTM Zone`, `MGRS` and `Source File`
+are formatted text.
+
+#### D, M, S are magnitudes, not signed values
+
+The separated `D`, `M` and `S` columns hold whole degrees, whole minutes and
+seconds as positive magnitudes — the sign is deliberately not carried there.
+Whole degrees alone cannot express it for a value between -1 and 0: a
+latitude of `-0.180653` is south, but its whole-degree part is `0`, and `0`
+has no sign either way. Each D/M/S triple sits beside the signed decimal
+value it was split from — the `lat`/`long` column immediately to its
+left — and that repeated decimal is what actually carries the hemisphere.
 
 ### Coordinate formats
 
@@ -68,14 +99,48 @@ not "south"). Rounding carries between units, so no output ever reads
 UTM and MGRS are left blank for points where they are undefined — beyond
 84°N or 80°S. Every other column is still filled for those rows.
 
+### The Areas sheet
+
+A batch containing any `<Polygon>` gains a second sheet, `Areas`, using the
+same columns as `Points` — a corner is a point that happens to belong to a
+shape, so it carries every coordinate format too.
+
+Each area is a grey banner giving its name, its size in all three units and
+its corner count, followed by its outline's corners as rows. A hole cut out of
+the shape gets a lighter sub-banner and its own corners beneath it. Corner
+numbering restarts within each ring.
+
+```
+An area — 956,863 m² · 95.686 ha · 0.956863 km² · 4 corners
+hole 1 — 4 corners
+```
+
+Sizes are **flat map area** — the shape as traced on a map, not surface area
+following the terrain. A sloping hillside's true surface is larger than its
+footprint, and the elevation data needed for that is not in a KML.
+
+Corners are projected into UTM and measured with the shoelace formula, every
+corner forced into the zone of the shape's centre so a shape near a zone
+boundary is not measured against two different grids. Holes are subtracted.
+
+Some shapes cannot be measured and say so on the banner instead of showing a
+number: fewer than three distinct corners, beyond the latitudes UTM covers, or
+spanning more than the six degrees of longitude one zone covers.
+
+### The Issues sheet
+
+If any file in the batch could not be read, a third sheet, `Issues`, names each
+failure. It exists so the web service can report a partial failure — there the
+response body is the workbook itself, with nowhere else to put a message.
+
 ## What gets extracted
 
-Every `<Placemark>` containing a `<Point>`, at any folder depth, including
-points inside a `<MultiGeometry>`. KML 2.2, the legacy Google Earth
-namespaces, and namespace-less files all work.
+Every `<Placemark>` containing a `<Point>` or a `<Polygon>`, at any folder
+depth, including those inside a `<MultiGeometry>`. KML 2.2, the legacy Google
+Earth namespaces, and namespace-less files all work.
 
-`LineString` and `Polygon` features are not extracted, but they are counted and
-reported as *"N non-point features skipped"*.
+`LineString`, `Model` and `Track` features are not extracted, but they are
+counted and reported as *"N non-point features skipped"*.
 
 Descriptions are converted from CDATA/HTML to a single line of plain text.
 
@@ -95,7 +160,7 @@ leaving the workbook somewhere you would not think to look.
 pytest
 ```
 
-156 tests. The GUI tests need a display and skip without one; on a headless
+301 tests. The GUI tests need a display and skip without one; on a headless
 machine run them under Xvfb:
 
 ```bash
@@ -108,13 +173,18 @@ xvfb-run -a pytest
 |---|---|
 | `kmz_points/convert.py` | Coordinate formatting — pure functions |
 | `kmz_points/archive.py` | KMZ → KML bytes |
-| `kmz_points/kml_parser.py` | Placemark/Point extraction |
+| `kmz_points/kml_parser.py` | Placemark point and polygon extraction |
+| `kmz_points/models.py` | Shared types: `Point`, `Area`, `BatchSummary` |
+| `kmz_points/geometry.py` | Area measurement — pure functions |
 | `kmz_points/table.py` | `COLUMNS` + `build_table_rows()` |
 | `kmz_points/excel.py` | Workbook writer |
 | `kmz_points/pipeline.py` | Orchestration and batch summary |
 | `kmz_points/cli.py` | Headless entry point |
 | `kmz_points/gui.py` | tkinter shell |
+| `kmz_points/server.py` | Flask LAN web service |
+| `serve.py` | Launches the web service, prints the URL to share |
 | `kmz_points/samples.py` | Demo input generation |
+| `kmz_points/selftest.py` | End-to-end check for a frozen build |
 
 The column layout is defined once, in `COLUMNS`. Adding or re-ordering a
 column is a change to that list and nothing else.

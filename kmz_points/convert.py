@@ -58,9 +58,18 @@ def format_ddm(value: float, axis: str) -> str:
     return f"{degrees}° {minutes:.4f}' {hemisphere}"
 
 
-def format_dms(value: float, axis: str) -> str:
-    """Degrees, minutes and seconds: ``34° 34' 4.40" N``."""
-    hemisphere = _hemisphere(value, axis)
+def dms_parts(value: float) -> tuple[int, int, float]:
+    """Split a coordinate into whole degrees, whole minutes and seconds.
+
+    All three are MAGNITUDES -- the sign is deliberately not carried here.
+    Degrees cannot express it for a value between -1 and 0: a latitude of
+    -0.180653 is south, but its whole-degree part is 0, and 0 has no sign. The
+    columns that use this sit beside the signed decimal value, which is what
+    tells you the hemisphere.
+
+    Rounds seconds first and carries upward, so 34.99999999 cannot come back
+    as 34 deg 60 min.
+    """
     magnitude = abs(value)
 
     degrees = int(magnitude)
@@ -75,6 +84,13 @@ def format_dms(value: float, axis: str) -> str:
         minutes -= 60
         degrees += 1
 
+    return degrees, minutes, seconds
+
+
+def format_dms(value: float, axis: str) -> str:
+    """Degrees, minutes and seconds: ``34° 34' 4.40" N``."""
+    hemisphere = _hemisphere(value, axis)
+    degrees, minutes, seconds = dms_parts(value)
     return f'{degrees}° {minutes}\' {seconds:.2f}" {hemisphere}'
 
 

@@ -98,6 +98,38 @@ you can copy it anywhere.
 
 ---
 
+## Running the service for colleagues
+
+The desktop app and the service are separate things. Colleagues install
+nothing; they open a browser.
+
+On your Mac:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+KMZ_PASSWORD='pick-something' python serve.py
+```
+
+It prints the address to share, for example `http://192.168.1.42:8000`. Give
+colleagues that link and the password. Stop it with Ctrl-C. Leave off
+`KMZ_PASSWORD` and it asks you for one instead of taking it from the command
+line, which keeps it out of your shell history.
+
+Three things to know before you hand the link out:
+
+- It only works while your laptop is awake, running that command, and on the
+  same network. Colleagues cannot tell "it's down" from "you went home".
+- The address changes when your laptop gets a new one from DHCP, so re-read
+  what the command prints rather than saving the link.
+- Traffic is plain HTTP. The password and the files are readable by anyone who
+  can watch that network. It is meant for a trusted office LAN, not the
+  internet.
+
+The service is deliberately not part of the `.exe` or `.dmg` — `build.spec`
+excludes Flask. Only you run the server.
+
 ## The warning message
 
 These apps are not signed with a paid certificate, so:

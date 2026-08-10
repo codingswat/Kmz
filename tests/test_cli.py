@@ -26,7 +26,7 @@ class TestExport:
         main([str(p) for p in samples] + ["-o", str(tmp_path / "out")])
         printed = capsys.readouterr().out
         assert "7 point(s) extracted" in printed
-        assert "2 non-point feature(s) skipped" in printed
+        assert "1 non-point feature(s) skipped" in printed
 
     def test_defaults_output_to_the_first_inputs_folder(self, samples, capsys):
         code = main([str(p) for p in samples])

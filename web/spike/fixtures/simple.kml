@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Simple</name>
+    <Placemark>
+      <name>Alpha</name>
+      <description>A plain description</description>
+      <Point><coordinates>38.123456,34.567890,120.5</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Bravo</name>
+      <description>Second point</description>
+      <Point><coordinates>-78.467834,-0.180653</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>

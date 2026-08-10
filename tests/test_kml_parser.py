@@ -7,7 +7,7 @@ swap here is silent and produces plausible-looking wrong answers.
 
 import pytest
 
-from kmz_points.kml_parser import parse_points
+from kmz_points.kml_parser import parse_document
 
 KML_22 = """<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
@@ -124,7 +124,7 @@ KML_BAD_COORDS = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def parse(text, source="test.kml"):
-    return parse_points(text.encode("utf-8"), source)
+    return parse_document(text.encode("utf-8"), source)
 
 
 class TestCoordinateOrder:
@@ -170,16 +170,22 @@ class TestNesting:
 
 
 class TestNonPointGeometry:
-    def test_line_and_polygon_are_not_extracted(self):
+    def test_a_polygon_does_not_become_a_point(self):
         result = parse(KML_MIXED_GEOMETRY)
         assert [p.name for p in result.points] == ["A point"]
 
-    def test_line_and_polygon_are_counted_as_skipped(self):
-        assert parse(KML_MIXED_GEOMETRY).skipped == 2
+    def test_only_the_line_is_counted_as_skipped_now(self):
+        # The polygon used to be skipped alongside the line. It is extracted
+        # as an area now, so only the LineString remains unhandled.
+        assert parse(KML_MIXED_GEOMETRY).skipped == 1
 
-    def test_polygon_inner_linear_ring_is_not_double_counted(self):
-        # Polygon contains a LinearRing; counting both would report 3
-        assert parse(KML_MIXED_GEOMETRY).skipped == 2
+    def test_the_polygon_is_kept_rather_than_discarded(self):
+        assert len(parse(KML_MIXED_GEOMETRY).areas) == 1
+
+    def test_a_linear_ring_is_never_counted_on_its_own(self):
+        # LinearRing lives inside Polygon. Counting it as skipped geometry
+        # would report the same shape twice.
+        assert parse(KML_MIXED_GEOMETRY).skipped == 1
 
 
 class TestDescriptions:
@@ -241,3 +247,110 @@ class TestNames:
         # <Folder><name>Outer</name> precedes the Placemark; a loose descendant
         # search would pick up "Outer" instead of "Deep"
         assert parse(KML_NESTED).points[0].name == "Deep"
+
+
+POLYGON_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Plot 12</name>
+      <description>A field</description>
+      <Polygon>
+        <outerBoundaryIs><LinearRing><coordinates>
+          30.000,10.000,0 30.010,10.000 30.010,10.010 30.000,10.010 30.000,10.000
+        </coordinates></LinearRing></outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>"""
+
+POLYGON_WITH_HOLE_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Courtyard plot</name>
+      <Polygon>
+        <outerBoundaryIs><LinearRing><coordinates>
+          30.000,10.000 30.020,10.000 30.020,10.020 30.000,10.020
+        </coordinates></LinearRing></outerBoundaryIs>
+        <innerBoundaryIs><LinearRing><coordinates>
+          30.005,10.005 30.010,10.005 30.010,10.010 30.005,10.010
+        </coordinates></LinearRing></innerBoundaryIs>
+        <innerBoundaryIs><LinearRing><coordinates>
+          30.014,10.014 30.016,10.014 30.016,10.016
+        </coordinates></LinearRing></innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>"""
+
+POLYGON_IN_MULTIGEOMETRY_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Wrapped</name>
+      <MultiGeometry>
+        <Polygon><outerBoundaryIs><LinearRing><coordinates>
+          30.000,10.000 30.010,10.000 30.010,10.010
+        </coordinates></LinearRing></outerBoundaryIs></Polygon>
+      </MultiGeometry>
+    </Placemark>
+  </Document>
+</kml>"""
+
+ROUTE_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>A route</name>
+      <LineString><coordinates>1,2 3,4 5,6</coordinates></LineString>
+    </Placemark>
+  </Document>
+</kml>"""
+
+
+class TestAreas:
+    def test_a_polygon_becomes_an_area(self):
+        areas = parse(POLYGON_KML).areas
+        assert len(areas) == 1
+        assert areas[0].name == "Plot 12"
+        assert areas[0].description == "A field"
+        assert areas[0].source_file == "test.kml"
+
+    def test_the_outer_ring_carries_its_corners_in_order(self):
+        area = parse(POLYGON_KML).areas[0]
+        # The ring is written closed, repeating the first coordinate last; the
+        # parser keeps what the file said and lets the measurement decide.
+        assert [(c.lon, c.lat) for c in area.outer][:3] == [
+            (30.000, 10.000),
+            (30.010, 10.000),
+            (30.010, 10.010),
+        ]
+
+    def test_corner_altitude_is_kept_when_present(self):
+        assert parse(POLYGON_KML).areas[0].outer[0].alt == 0
+
+    def test_corners_are_attributed_to_their_source_file(self):
+        area = parse(POLYGON_KML, source="plots.kmz").areas[0]
+        assert {c.source_file for c in area.outer} == {"plots.kmz"}
+
+    def test_every_hole_is_captured(self):
+        area = parse(POLYGON_WITH_HOLE_KML).areas[0]
+        assert len(area.holes) == 2
+        assert len(area.holes[0]) == 4
+        assert len(area.holes[1]) == 3
+
+    def test_a_polygon_inside_multigeometry_is_found(self):
+        assert len(parse(POLYGON_IN_MULTIGEOMETRY_KML).areas) == 1
+
+    def test_a_polygon_is_no_longer_counted_as_skipped(self):
+        # It used to be discarded and counted; now it is kept.
+        assert parse(POLYGON_KML).skipped == 0
+
+    def test_a_route_is_still_skipped(self):
+        result = parse(ROUTE_KML)
+        assert result.areas == []
+        assert result.skipped == 1
+
+    def test_a_document_with_no_polygons_has_no_areas(self):
+        assert parse(KML_22).areas == []

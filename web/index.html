@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KML / KMZ Point Extractor</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 3rem auto;
+         padding: 0 1rem; color: #1f2933; background: #f2f4f7; }
+  h1 { margin-bottom: .25rem; }
+  .note { color: #6b7785; font-size: .9rem; }
+  .warning { color: #b54708; }
+  .error { color: #b42318; }
+  button { font: inherit; padding: .6rem 1rem; border: 0; border-radius: .3rem;
+           background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
+  button[disabled] { opacity: .55; cursor: progress; }
+  button.secondary { background: #fff; color: #1f2933; border: 1px solid #d5dce5;
+                     font-weight: 400; }
+  #drop-zone { border: 1px dashed #a9c6e8; background: #eaf2fd; border-radius: .4rem;
+               padding: 2.5rem 1rem; text-align: center; color: #6b7785;
+               margin: 1rem 0; cursor: pointer; }
+  #drop-zone.over { border-color: #2563eb; background: #dbeafe; color: #1f2933; }
+  #chosen { margin: .5rem 0; }
+  .summary { background: #fff; border: 1px solid #d5dce5; border-radius: .4rem;
+             padding: 1rem; white-space: pre-line; margin-top: 1rem; }
+  .privacy { background: #eef4fb; border: 1px solid #a9c6e8; border-radius: .4rem;
+             padding: .75rem 1rem; font-size: .9rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+
+<h1>KML / KMZ Point Extractor</h1>
+<p class="note">Turns KML and KMZ files into one Excel workbook.</p>
+
+<p class="note">
+  Points become one row each, with decimal degrees, degrees–minutes–seconds,
+  UTM and MGRS. Areas get their own sheet, with their size in m², hectares and
+  km², and their corners listed beneath. Routes and tracks are counted but not
+  extracted.
+</p>
+
+<div id="drop-zone">Drop .kml or .kmz files here, or click to choose</div>
+<input type="file" id="files" accept=".kml,.kmz" multiple hidden>
+<p id="chosen" class="note"></p>
+
+<p>
+  <button id="convert" disabled>Convert</button>
+  <button id="clear" class="secondary" hidden>Clear</button>
+</p>
+
+<div id="result" hidden></div>
+
+<div class="privacy">
+  <strong>Your files never leave this device.</strong> The conversion runs
+  entirely in your browser — nothing is uploaded, and there is no server to
+  send it to. It keeps working with the network off.
+</div>
+
+<script type="module">
+import { convert } from "./src/pipeline.js";
+import { summaryText } from "./src/pipeline.js";
+
+const zone = document.getElementById("drop-zone");
+const input = document.getElementById("files");
+const chosen = document.getElementById("chosen");
+const convertButton = document.getElementById("convert");
+const clearButton = document.getElementById("clear");
+const result = document.getElementById("result");
+
+let selected = [];
+
+function acceptable(files) {
+  return Array.from(files).filter((file) => /\.(kml|kmz)$/i.test(file.name));
+}
+
+function describe() {
+  convertButton.disabled = selected.length === 0;
+  clearButton.hidden = selected.length === 0;
+  chosen.textContent = selected.length
+    ? `${selected.length} file(s): ${selected.map((f) => f.name).join(", ")}`
+    : "";
+}
+
+function choose(files) {
+  const good = acceptable(files);
+  if (!good.length) {
+    chosen.innerHTML = '<span class="warning">Those are not .kml or .kmz files.</span>';
+    return;
+  }
+  selected = good;
+  describe();
+}
+
+zone.addEventListener("click", () => input.click());
+input.addEventListener("change", () => choose(input.files));
+
+["dragenter", "dragover"].forEach((name) =>
+  zone.addEventListener(name, (event) => {
+    event.preventDefault();
+    zone.classList.add("over");
+  }),
+);
+["dragleave", "drop"].forEach((name) =>
+  zone.addEventListener(name, () => zone.classList.remove("over")),
+);
+zone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  choose(event.dataTransfer.files);
+});
+
+clearButton.addEventListener("click", () => {
+  selected = [];
+  input.value = "";
+  result.hidden = true;
+  describe();
+});
+
+convertButton.addEventListener("click", async () => {
+  convertButton.disabled = true;
+  convertButton.textContent = "Converting…";
+  result.hidden = true;
+
+  try {
+    const files = [];
+    for (const file of selected) {
+      files.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    }
+
+    const { summary, workbook, filename } = await convert(files);
+    const lines = [`<div class="summary">${summaryText(summary)}</div>`];
+    for (const warning of summary.warnings) {
+      lines.push(`<p class="warning">${warning}</p>`);
+    }
+    result.innerHTML = lines.join("");
+    result.hidden = false;
+
+    if (workbook) {
+      // A plain anchor click: no server, so the file is handed straight from
+      // memory to the browser's own download.
+      const url = URL.createObjectURL(
+        new Blob([workbook], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (error) {
+    result.innerHTML = `<p class="error">Something went wrong: ${error.message}</p>`;
+    result.hidden = false;
+  } finally {
+    convertButton.textContent = "Convert";
+    convertButton.disabled = selected.length === 0;
+  }
+});
+
+describe();
+</script>
+</body>
+</html>
