@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 
 from kmz_points.samples import write_samples
 from kmz_points.server import create_app, safe_upload_name
+from kmz_points.table import headers
 
 PASSWORD = "correct horse"
 
@@ -261,4 +262,9 @@ class TestConvert:
         assert response.status_code == 200
         assert response.mimetype == XLSX_MIME
         sheet = load_workbook(io.BytesIO(response.data))["Points"]
-        assert sheet.max_row - 1 == 2  # both same-named uploads came through
+        # A row count alone cannot tell a healthy batch from one where the
+        # first upload was clobbered and the second double-counted: both
+        # shapes have 2 data rows. Check the actual point names instead.
+        name_column = headers().index("Name")
+        names = {row[name_column].value for row in sheet.iter_rows(min_row=2)}
+        assert names == {"Alpha", "Bravo"}
