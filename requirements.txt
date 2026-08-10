@@ -14,3 +14,7 @@ packaging>=23.0
 
 # Tests
 pytest>=8.0
+
+# Web service. Only needed to run the LAN service (serve.py); the desktop app
+# never imports Flask, and build.spec excludes it from the bundle.
+flask>=3.0
