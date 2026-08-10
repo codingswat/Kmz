@@ -7,8 +7,18 @@ directory and the workbook streams back from memory.
 
 from __future__ import annotations
 
+import hmac
+import secrets
 from pathlib import Path
 
+from flask import (
+    Flask,
+    redirect,
+    render_template_string,
+    request,
+    session,
+    url_for,
+)
 from werkzeug.utils import secure_filename
 
 ALLOWED_SUFFIXES = (".kml", ".kmz")
@@ -16,6 +26,8 @@ ALLOWED_SUFFIXES = (".kml", ".kmz")
 # Filenames over 255 bytes raise OSError on macOS and Linux. The cap is well
 # under that so the temp directory prefix cannot push a name over the limit.
 MAX_STEM = 100
+
+DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 def safe_upload_name(raw: str, index: int) -> str | None:
@@ -36,3 +48,89 @@ def safe_upload_name(raw: str, index: int) -> str | None:
 
     stem = secure_filename(Path(raw).stem)[:MAX_STEM] or f"upload_{index}"
     return f"{stem}{suffix}"
+
+
+_LOGIN_PAGE = """<!doctype html>
+<title>KML / KMZ Point Extractor</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto;
+         padding: 0 1rem; color: #1f2933; }
+  .error { color: #b42318; }
+  input, button { font: inherit; padding: .5rem; }
+</style>
+<h1>KML / KMZ Point Extractor</h1>
+<p>Enter the team password to continue.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="{{ url_for('login') }}">
+  <input type="password" name="password" autofocus>
+  <button type="submit">Continue</button>
+</form>
+"""
+
+_UPLOAD_PAGE = """<!doctype html>
+<title>KML / KMZ Point Extractor</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
+         padding: 0 1rem; color: #1f2933; }
+  .summary { background: #f2f4f7; padding: 1rem; border-radius: .4rem;
+             white-space: pre-line; }
+  .warning { color: #b54708; }
+  input, button { font: inherit; padding: .5rem; }
+</style>
+<h1>KML / KMZ Point Extractor</h1>
+<p>Choose one or more .kml or .kmz files. You will get one Excel workbook back.</p>
+<form method="post" action="{{ url_for('convert') }}" enctype="multipart/form-data">
+  <input type="file" name="files" accept=".kml,.kmz" multiple required>
+  <button type="submit">Convert</button>
+</form>
+{% if summary %}<div class="summary">{{ summary }}</div>{% endif %}
+{% for warning in warnings %}<p class="warning">{{ warning }}</p>{% endfor %}
+"""
+
+
+def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) -> Flask:
+    """Build the web app.
+
+    A factory rather than a module-level app so each test gets its own
+    instance with its own password and upload cap.
+    """
+    if not password:
+        raise ValueError("a password is required")
+
+    app = Flask(__name__)
+    app.config.update(
+        # Generated per run and never persisted: restarting signs everyone
+        # out, which suits a service that keeps nothing.
+        SECRET_KEY=secrets.token_urlsafe(32),
+        MAX_CONTENT_LENGTH=max_upload_bytes,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+    )
+
+    def signed_in() -> bool:
+        return session.get("authenticated") is True
+
+    @app.get("/")
+    def index():
+        if not signed_in():
+            return render_template_string(_LOGIN_PAGE, error=None)
+        return render_template_string(_UPLOAD_PAGE, summary=None, warnings=[])
+
+    expected = password.encode("utf-8")
+
+    @app.post("/login")
+    def login():
+        # compare_digest so a wrong password cannot be found by timing, and
+        # on bytes rather than str: it rejects str operands that are not both
+        # ASCII, which would 500 on any accented password.
+        supplied = request.form.get("password", "").encode("utf-8")
+        if hmac.compare_digest(supplied, expected):
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        return render_template_string(_LOGIN_PAGE, error="Wrong password."), 401
+
+    @app.post("/convert")
+    def convert():
+        raise NotImplementedError("Task 5")
+
+    return app
