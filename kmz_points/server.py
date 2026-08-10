@@ -81,7 +81,7 @@ _UPLOAD_PAGE = """<!doctype html>
   body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
          padding: 0 1rem; color: #1f2933; background: #f2f4f7; }
   .summary { background: #f2f4f7; padding: 1rem; border-radius: .4rem;
-             white-space: pre-line; }
+             border: 1px solid #d5dce5; white-space: pre-line; }
   .warning { color: #b54708; }
   input, button { font: inherit; padding: .5rem; }
 </style>

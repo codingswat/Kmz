@@ -60,6 +60,22 @@ def _body_rule(html):
     return match.group(1)
 
 
+def _summary_rule(html):
+    """The CSS text of the `.summary { ... }` rule only, scoped the same way
+    as `_body_rule` so this cannot be satisfied by a declaration on some
+    other, unrelated selector."""
+    match = re.search(r"\.summary\s*\{([^}]*)\}", html)
+    assert match, "no .summary rule found in the page's stylesheet"
+    return match.group(1)
+
+
+def _declared_background(css_text):
+    """The value of a `background:` declaration within a CSS rule's text, or
+    None if the rule does not declare one."""
+    match = re.search(r"background:\s*([^;]+);", css_text)
+    return match.group(1).strip() if match else None
+
+
 class TestSafeUploadName:
     def test_a_plain_name_is_kept(self):
         assert safe_upload_name("doc.kml", 0) == "doc.kml"
@@ -149,6 +165,36 @@ class TestPasswordGate:
         client.post("/login", data={"password": PASSWORD})
         upload_page = client.get("/").get_data(as_text=True)
         assert "background" in _body_rule(upload_page)
+
+    def test_the_summary_block_stays_visually_distinct_from_the_page(self, client):
+        # .summary used to stand out against the browser's default canvas on
+        # its own #f2f4f7 background. Once body also got an explicit
+        # #f2f4f7 background (the dark-mode fix above), the two became
+        # byte-identical and the summary block disappeared into the page
+        # with nothing to compensate. That block is what a colleague sees
+        # when their files failed to convert or produced no points, so
+        # losing its separation matters even though the text inside stays
+        # legible either way.
+        client.post("/login", data={"password": PASSWORD})
+        upload_page = client.get("/").get_data(as_text=True)
+
+        body_background = _declared_background(_body_rule(upload_page))
+        summary_css = _summary_rule(upload_page)
+        summary_background = _declared_background(summary_css)
+
+        distinct_background = (
+            summary_background is not None and summary_background != body_background
+        )
+        # `\bborder\s*:` rather than a plain substring check: `.summary`
+        # already declares `border-radius`, which contains the substring
+        # "border" but draws nothing by itself without an actual border
+        # property to go with it.
+        has_border = bool(re.search(r"\bborder\s*:", summary_css))
+
+        assert distinct_background or has_border, (
+            ".summary must use a different background than body or declare "
+            "a border, or the panel disappears into the page"
+        )
 
 
 class TestConvert:
