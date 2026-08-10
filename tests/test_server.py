@@ -482,3 +482,28 @@ class TestAreasOnThePage:
             "/convert", data={"files": [(io.BytesIO(empty), "empty.kml")]}
         )
         assert "area(s) extracted" in response.get_data(as_text=True)
+
+
+class TestDropZone:
+    """Drag-and-drop is decoration over the file input, not a replacement:
+    the zone is hidden until the script reveals it, so a browser without
+    JavaScript never shows an invitation it cannot honour."""
+
+    def test_the_zone_ships_hidden(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert 'id="drop-zone" hidden' in body
+
+    def test_the_file_input_is_still_present_and_required(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert 'type="file"' in body
+        assert "required" in body
+
+    def test_the_zone_says_what_it_accepts(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert ".kml" in body and ".kmz" in body
+
+    def test_the_page_still_posts_without_the_script(self, signed_in, samples):
+        # Whatever the script does, the plain form post must still convert.
+        response = signed_in.post("/convert", data=payload(samples))
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
