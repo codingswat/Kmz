@@ -12,9 +12,10 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
+from kmz_points.excel import data_rows
 from kmz_points.samples import write_samples
 from kmz_points.server import create_app, safe_upload_name
-from kmz_points.table import headers
+from kmz_points.table import column_index
 
 PASSWORD = "correct horse"
 
@@ -207,7 +208,7 @@ class TestConvert:
         assert response.status_code == 200
         assert response.mimetype == XLSX_MIME
         sheet = load_workbook(io.BytesIO(response.data)).active
-        assert sheet.max_row - 1 == 7  # header plus the 7 sample points
+        assert len(data_rows(sheet)) == 7  # the 7 sample points
 
     def test_the_download_is_named_by_the_usual_pattern(self, signed_in, samples):
         response = signed_in.post("/convert", data=payload(samples))
@@ -221,7 +222,7 @@ class TestConvert:
         assert response.status_code == 200
         assert response.mimetype == XLSX_MIME
         sheet = load_workbook(io.BytesIO(response.data))["Points"]
-        assert sheet.max_row - 1 == 7  # the good files still all came through
+        assert len(data_rows(sheet)) == 7  # the good files still all came through
 
     def test_the_failure_is_named_in_the_downloaded_workbook(
         self, signed_in, samples, tmp_path
@@ -338,6 +339,10 @@ class TestConvert:
         # A row count alone cannot tell a healthy batch from one where the
         # first upload was clobbered and the second double-counted: both
         # shapes have 2 data rows. Check the actual point names instead.
-        name_column = headers().index("Name")
-        names = {row[name_column].value for row in sheet.iter_rows(min_row=2)}
+        # data_rows (not a raw min_row scan) is required here too: both
+        # uploads sanitise to the same stem, so their single point each still
+        # gets its own grey banner row naming "doc.kml" above it, and that
+        # banner would otherwise land in the same column as Name.
+        name_column = column_index("Name")
+        names = {row[name_column].value for row in data_rows(sheet)}
         assert names == {"Alpha", "Bravo"}

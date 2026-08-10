@@ -6,9 +6,10 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from kmz_points.excel import HEADER_ROW, data_rows
 from kmz_points.pipeline import export_to_excel, export_to_stream, load_file, run
 from kmz_points.samples import write_samples
-from kmz_points.table import headers
+from kmz_points.table import COMBINED, column_index, headers
 
 # What write_samples() is defined to produce.
 SAMPLE_POINT_TOTAL = 7
@@ -114,46 +115,64 @@ class TestEndToEnd:
         out = tmp_path / "out"
         summary = run(samples, out)
         book = openpyxl.load_workbook(summary.output_path)
-        assert [c.value for c in book.active[1]] == headers()
+        assert [c.value for c in book.active[HEADER_ROW]] == headers()
 
     def test_every_extracted_point_becomes_a_row(self, samples, tmp_path):
         summary = run(samples, tmp_path / "out")
         book = openpyxl.load_workbook(summary.output_path)
-        assert book.active.max_row == SAMPLE_POINT_TOTAL + 1
+        assert len(data_rows(book.active)) == SAMPLE_POINT_TOTAL
 
     def test_numbering_runs_unbroken_across_the_whole_batch(self, samples, tmp_path):
         summary = run(samples, tmp_path / "out")
         sheet = openpyxl.load_workbook(summary.output_path).active
-        numbers = [sheet.cell(row=r, column=1).value for r in range(2, sheet.max_row + 1)]
+        number = column_index("#", band=COMBINED)
+        numbers = [row[number].value for row in data_rows(sheet)]
         assert numbers == list(range(1, SAMPLE_POINT_TOTAL + 1))
 
     def test_no_mandatory_cell_is_left_empty(self, samples, tmp_path):
         summary = run(samples, tmp_path / "out")
         sheet = openpyxl.load_workbook(summary.output_path).active
-        # Altitude and Description are legitimately optional; everything else
-        # must be populated for every row.
-        optional = {"Altitude (m)", "Description"}
-        required = [
-            i for i, h in enumerate(headers(), start=1) if h not in optional
-        ]
-        for row in range(2, sheet.max_row + 1):
-            for column in required:
-                value = sheet.cell(row=row, column=column).value
+        # Elevation and Description are legitimately optional; everything
+        # else must be populated for every row.
+        optional = {"elevation", "Description"}
+        required = [i for i, h in enumerate(headers()) if h not in optional]
+        for row in data_rows(sheet):
+            for index in required:
+                value = row[index].value
                 assert value not in (None, ""), (
-                    f"row {row} column {headers()[column - 1]!r} is empty"
+                    f"row {row[0].row} column {headers()[index]!r} is empty"
                 )
 
     def test_all_three_source_files_are_represented(self, samples, tmp_path):
         summary = run(samples, tmp_path / "out")
         sheet = openpyxl.load_workbook(summary.output_path).active
-        column = headers().index("Source File") + 1
-        sources = {sheet.cell(row=r, column=column).value for r in range(2, sheet.max_row + 1)}
+        source = column_index("Source File")
+        sources = {row[source].value for row in data_rows(sheet)}
         assert sources == {"simple.kml", "nested.kml", "sample.kmz"}
 
     def test_output_lands_in_the_requested_directory(self, samples, tmp_path):
         out = tmp_path / "chosen"
         summary = run(samples, out)
         assert summary.output_path.startswith(str(out))
+
+    def test_each_source_file_gets_its_own_banner_in_order(self, samples, tmp_path):
+        # An end-to-end guard for the banner grouping: it relies on points
+        # arriving in file order, which is a property of the real pipeline
+        # that a synthetic, hand-ordered test can't accidentally violate.
+        summary = run(samples, tmp_path / "out")
+        sheet = openpyxl.load_workbook(summary.output_path).active
+        source = column_index("Source File")
+
+        seen = []
+        previous = None
+        for row in data_rows(sheet):
+            current = row[source].value
+            if current != previous:
+                banner_row = row[0].row - 1
+                assert sheet.cell(row=banner_row, column=1).value == current
+                seen.append(current)
+                previous = current
+        assert seen == ["simple.kml", "nested.kml", "sample.kmz"]
 
 
 class TestExportToStream:
@@ -165,7 +184,7 @@ class TestExportToStream:
         export_to_stream(loaded, buffer)
         buffer.seek(0)
         sheet = openpyxl.load_workbook(buffer).active
-        assert sheet.max_row - 1 == SAMPLE_POINT_TOTAL
+        assert len(data_rows(sheet)) == SAMPLE_POINT_TOTAL
 
     def test_the_summary_matches_the_file_based_export(self, samples, tmp_path):
         # Guards the _collect split: the two paths must not drift.
