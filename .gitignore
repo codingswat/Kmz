@@ -17,3 +17,8 @@ staging/
 # build in CI and BUILDING.md depends on it.
 *.spec
 !build.spec
+
+# Regenerated from the Python implementation on every test run. Committing it
+# would let the browser version be checked against a stale reference, which is
+# the one failure this cross-check exists to prevent.
+web/test/fixtures.json

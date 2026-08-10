@@ -8,6 +8,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The browser version is a second implementation of the same logic, so what
+  # is checked is not that it runs but that it AGREES with the Python one.
+  # Expected values are regenerated from Python on every run rather than read
+  # from a committed file, so a drift between the two fails here instead of
+  # going unnoticed until someone compares two workbooks by hand.
+  web:
+    name: Browser version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate the expected values from the Python implementation
+        run: python web/test/generate-fixtures.py
+
+      - name: Check the browser version agrees with Python
+        run: node --test "web/test/*.test.mjs"
+
+      - name: Check the single-file build is current
+        # Covered by the suite above, but called out separately so a stale
+        # kmz-extractor.html is obvious in the job list rather than buried.
+        run: |
+          node web/build.mjs
+          git diff --exit-code web/kmz-extractor.html \
+            || (echo "::error::kmz-extractor.html is out of date. Run 'node web/build.mjs' and commit it." && exit 1)
+
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}

@@ -44,15 +44,46 @@ worth running whenever either side changes.
 
 ## Running it
 
-Any static file server will do — there is no build step and no dependency:
+**The simplest way: open `kmz-extractor.html`.** One self-contained file —
+double-click it, email it, put it anywhere. No server, no install, no network.
+
+Opening `index.html` directly does **not** work, and this is worth knowing
+because it fails silently: browsers refuse ES module imports from a `file://`
+origin, so the page renders and then does nothing at all. Use the single file,
+or serve the folder:
 
 ```bash
 cd web && python3 -m http.server 8777
 ```
 
-Then open `http://127.0.0.1:8777/`. To embed it in another platform, copy
-`src/` and call `convert(files)` from `src/pipeline.js`; it takes
-`{name, bytes}` and returns `{summary, workbook, filename}`.
+`kmz-extractor.html` is built from `src/` and committed, so it must be rebuilt
+whenever `src/` changes:
+
+```bash
+node web/build.mjs
+```
+
+CI fails if it is out of date.
+
+To embed it in another platform, copy `src/` and call `convert(files)` from
+`src/pipeline.js`; it takes `{name, bytes}` and returns
+`{summary, workbook, filename}`.
+
+## Tests
+
+```bash
+.venv/bin/python web/test/generate-fixtures.py   # expected values, from Python
+node --test "web/test/*.test.mjs"
+```
+
+Run on every push by the **Browser version** CI job. The expected values are
+regenerated from the Python implementation each time rather than committed, so
+a drift between the two fails the build instead of being checked against a
+stale reference.
+
+One gap to be aware of: `src/kml.js` needs a DOM, so it is not covered by
+these tests. It is checked in a real browser instead, and everything
+downstream of it — geometry, the table, the workbook — is covered here.
 
 ## Does it agree with the Python?
 
