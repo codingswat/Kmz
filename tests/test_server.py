@@ -228,3 +228,37 @@ class TestConvert:
         assert list(scratch.iterdir()) == []
         assert not (tmp_path / "evil.kml").exists()
         assert not (tmp_path.parent / "evil.kml").exists()
+
+    def test_two_uploads_with_the_same_name_do_not_collide(self, signed_in):
+        # "doc.kml" twice: both sanitise to the identical stem, so without a
+        # per-upload subdirectory the second save can overwrite the first on
+        # disk before both are accounted for.
+        first = (
+            '<?xml version="1.0"?>'
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+            "<Placemark><name>Alpha</name>"
+            "<Point><coordinates>1,2</coordinates></Point></Placemark>"
+            "</Document></kml>"
+        ).encode()
+        second = (
+            '<?xml version="1.0"?>'
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+            "<Placemark><name>Bravo</name>"
+            "<Point><coordinates>3,4</coordinates></Point></Placemark>"
+            "</Document></kml>"
+        ).encode()
+
+        response = signed_in.post(
+            "/convert",
+            data={
+                "files": [
+                    (io.BytesIO(first), "doc.kml"),
+                    (io.BytesIO(second), "doc.kml"),
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
+        sheet = load_workbook(io.BytesIO(response.data))["Points"]
+        assert sheet.max_row - 1 == 2  # both same-named uploads came through

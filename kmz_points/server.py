@@ -173,7 +173,15 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
                     )
                     continue
 
-                destination = Path(workspace) / name
+                # Each upload gets its own numbered subdirectory rather than
+                # sharing workspace's root: two uploads whose names sanitise
+                # to the same value (two files both called doc.kml) would
+                # otherwise land on the same path and one would overwrite the
+                # other on disk. The saved filename itself is untouched, so
+                # it still reads correctly in warnings and the Issues sheet.
+                upload_dir = Path(workspace) / str(index)
+                upload_dir.mkdir()
+                destination = upload_dir / name
                 upload.save(destination)
                 loaded.append(load_file(destination))
 
