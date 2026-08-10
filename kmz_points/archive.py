@@ -45,9 +45,12 @@ def _read_from_kmz(path: Path) -> bytes:
             # spent.
             info = archive.getinfo(chosen)
             if info.file_size > MAX_KML_BYTES:
+                # Rounded up, not floored: flooring rendered one byte over the
+                # cap as "would expand to 200 MB, over the 200 MB limit".
+                expanded_mb = -(-info.file_size // (1024 * 1024))
                 raise ArchiveError(
-                    f"{path.name}: {chosen} would expand to "
-                    f"{info.file_size // (1024 * 1024)} MB, over the "
+                    f"{path.name}: {chosen} would expand to about "
+                    f"{expanded_mb} MB, over the "
                     f"{MAX_KML_BYTES // (1024 * 1024)} MB limit"
                 )
             return archive.read(chosen)

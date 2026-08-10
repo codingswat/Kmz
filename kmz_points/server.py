@@ -39,8 +39,15 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _format_mb(num_bytes: int) -> str:
-    """A human figure for an upload cap, e.g. ``50`` rather than ``50.0``."""
-    return f"{num_bytes / (1024 * 1024):g}"
+    """A human figure for an upload cap, e.g. ``50`` rather than ``50.0``.
+
+    Falls back to KB below a megabyte: %g renders a 1000-byte cap as
+    ``0.000953674``, which read as gibberish on the over-the-limit page.
+    """
+    megabytes = num_bytes / (1024 * 1024)
+    if megabytes < 1:
+        return f"{num_bytes / 1024:.3g} KB"
+    return f"{megabytes:g} MB"
 
 
 def safe_upload_name(raw: str, index: int) -> str | None:
@@ -92,7 +99,7 @@ _UPLOAD_PAGE = """<!doctype html>
 </style>
 <h1>KML / KMZ Point Extractor</h1>
 <p>Choose one or more .kml or .kmz files. You will get one Excel workbook back.</p>
-<p>Total upload size must be under {{ max_upload_mb }} MB.</p>
+<p>Total upload size must be under {{ upload_limit }}.</p>
 <form method="post" action="{{ url_for('convert') }}" enctype="multipart/form-data">
   <input type="file" name="files" accept=".kml,.kmz" multiple required>
   <button type="submit">Convert</button>
@@ -121,14 +128,14 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
         SESSION_COOKIE_SAMESITE="Lax",
     )
 
-    max_upload_mb = _format_mb(max_upload_bytes)
+    upload_limit = _format_mb(max_upload_bytes)
 
     def _upload_page(summary=None, warnings=()):
         return render_template_string(
             _UPLOAD_PAGE,
             summary=summary,
             warnings=list(warnings),
-            max_upload_mb=max_upload_mb,
+            upload_limit=upload_limit,
         )
 
     def signed_in() -> bool:
@@ -218,7 +225,7 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
         # a message that says why and how big is too big, while still
         # answering 413 so a script or the test suite can tell what happened.
         message = (
-            f"That upload is over the {max_upload_mb} MB limit. "
+            f"That upload is over the {upload_limit} limit. "
             "Choose fewer or smaller files."
         )
         return _upload_page(warnings=[message]), 413

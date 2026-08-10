@@ -304,7 +304,18 @@ class TestConvert:
         body = response.get_data(as_text=True)
         assert response.status_code == 413
         assert "KML / KMZ Point Extractor" in body
-        assert "MB limit" in body
+        assert "limit" in body
+
+    def test_a_sub_megabyte_cap_is_stated_in_kb_not_as_a_fraction(self):
+        # %g rendered a 1000-byte cap as "0.000953674 MB", which reads as
+        # gibberish to whoever hit it.
+        app = create_app(PASSWORD, max_upload_bytes=1000)
+        app.config["TESTING"] = True
+        client = app.test_client()
+        client.post("/login", data={"password": PASSWORD})
+        body = client.get("/").get_data(as_text=True)
+        assert "KB" in body
+        assert "0.00" not in body
 
     def test_the_upload_page_states_the_size_limit_up_front(self, signed_in):
         body = signed_in.get("/").get_data(as_text=True)
