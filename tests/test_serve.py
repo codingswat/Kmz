@@ -47,9 +47,21 @@ class TestLanAddress:
 
 class TestMain:
     def test_an_empty_password_stops_before_starting(self, monkeypatch, capsys):
+        # _run_app is monkeypatched even though the guard should stop main()
+        # before it is ever reached: if the guard regresses (e.g. weakens to
+        # `if not password:`, and "   " is truthy) this turns "falls through
+        # to a real Flask dev server that binds a port and hangs forever"
+        # into a fast, clear assertion failure instead.
         monkeypatch.setenv("KMZ_PASSWORD", "   ")
+        called = {"value": False}
+
+        def fake_run(**kwargs):
+            called["value"] = True
+
+        monkeypatch.setattr(serve, "_run_app", fake_run)
         assert serve.main() == 1
         assert "password" in capsys.readouterr().out.lower()
+        assert called["value"] is False
 
     def test_the_shared_url_is_printed(self, monkeypatch, capsys):
         monkeypatch.setenv("KMZ_PASSWORD", "hunter2")
