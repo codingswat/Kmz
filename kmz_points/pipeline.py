@@ -15,8 +15,8 @@ from typing import BinaryIO
 
 from kmz_points.archive import ArchiveError, read_kml_bytes
 from kmz_points.excel import output_filename, write_workbook
-from kmz_points.kml_parser import parse_points
-from kmz_points.models import BatchSummary, Point
+from kmz_points.kml_parser import parse_document
+from kmz_points.models import Area, BatchSummary, Point
 from kmz_points.table import build_table_rows
 
 
@@ -26,6 +26,7 @@ class LoadedFile:
 
     path: Path
     points: list[Point] = field(default_factory=list)
+    areas: list[Area] = field(default_factory=list)
     skipped: int = 0
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
@@ -37,6 +38,10 @@ class LoadedFile:
     @property
     def point_count(self) -> int:
         return len(self.points)
+
+    @property
+    def area_count(self) -> int:
+        return len(self.areas)
 
     @property
     def ok(self) -> bool:
@@ -75,10 +80,11 @@ def load_file(path: str | Path) -> LoadedFile:
     except Exception as exc:  # unreadable for a reason we did not anticipate
         return LoadedFile(path=path, error=f"{path.name}: {exc}")
 
-    result = parse_points(data, path.name)
+    result = parse_document(data, path.name)
     return LoadedFile(
         path=path,
         points=result.points,
+        areas=result.areas,
         skipped=result.skipped,
         warnings=list(result.warnings),
     )

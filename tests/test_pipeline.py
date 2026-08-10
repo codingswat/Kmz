@@ -13,7 +13,9 @@ from kmz_points.table import COMBINED, column_index, headers
 
 # What write_samples() is defined to produce.
 SAMPLE_POINT_TOTAL = 7
-SAMPLE_SKIPPED_TOTAL = 2
+# One LineString route. The sample Polygon used to be skipped too; it is
+# extracted as an area now.
+SAMPLE_SKIPPED_TOTAL = 1
 
 
 @pytest.fixture
@@ -50,7 +52,7 @@ class TestLoadFile:
         nested = next(p for p in samples if p.name == "nested.kml")
         result = load_file(nested)
         assert result.point_count == 3
-        assert result.skipped == 2
+        assert result.skipped == 1  # the route; the polygon is now an area
 
     def test_points_are_attributed_to_their_source_file(self, samples):
         simple = next(p for p in samples if p.name == "simple.kml")

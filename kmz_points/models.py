@@ -21,11 +21,32 @@ class Point:
     source_file: str
 
 
+@dataclass(frozen=True)
+class Area:
+    """One extracted Polygon: an outline, and any holes cut out of it.
+
+    Corners are Points so they render through the same row builder as ordinary
+    points, with every conversion already in place. A corner is a point that
+    happens to belong to a shape.
+    """
+
+    name: str
+    description: str
+    outer: list[Point]
+    holes: list[list[Point]] = field(default_factory=list)
+    source_file: str = ""
+
+    @property
+    def corner_count(self) -> int:
+        return len(self.outer)
+
+
 @dataclass
 class ParseResult:
-    """Points found in a single document, plus what was ignored along the way."""
+    """What a single document yielded, plus what was ignored along the way."""
 
     points: list[Point] = field(default_factory=list)
+    areas: list[Area] = field(default_factory=list)
     skipped: int = 0
     warnings: list[str] = field(default_factory=list)
 

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from lxml import etree, html
 
-from kmz_points.models import ParseResult, Point
+from kmz_points.models import Area, ParseResult, Point
 
-# Geometry types that are counted but not extracted. LinearRing is excluded
-# on purpose -- it lives inside Polygon and would double-count every shape.
-_NON_POINT_GEOMETRY = {"LineString", "Polygon", "Model", "Track"}
+# Geometry types that are counted but not extracted. LinearRing is excluded on
+# purpose -- it lives inside Polygon and would double-count every shape, and
+# Polygon is no longer here because its areas are now extracted.
+_NON_POINT_GEOMETRY = {"LineString", "Model", "Track"}
 
 
 def _local_name(element) -> str | None:
@@ -68,7 +69,70 @@ def _parse_coordinate_tuple(text: str | None) -> tuple[float, float, float | Non
     return lon, lat, alt
 
 
-def _parse_document(data: bytes, result: ParseResult):
+def _parse_coordinate_list(text: str | None) -> list[tuple[float, float, float | None]]:
+    """Parse a whitespace-separated run of ``lon,lat[,alt]`` triples.
+
+    A ring's coordinates are one long run of them, unlike a Point which holds
+    a single tuple. Unusable entries are dropped rather than failing the ring:
+    one bad corner should not lose the whole shape.
+    """
+    if not text or not text.strip():
+        return []
+
+    corners = []
+    for entry in text.split():
+        try:
+            corners.append(_parse_coordinate_tuple(entry))
+        except (ValueError, TypeError):
+            continue
+    return corners
+
+
+def _ring_corners(boundary, name: str, source_file: str) -> list[Point]:
+    """The Points of a LinearRing inside an outer/inner boundary element."""
+    corners: list[Point] = []
+    for ring in _find_descendants(boundary, "LinearRing"):
+        coordinates = _find_child(ring, "coordinates")
+        raw = coordinates.text if coordinates is not None else None
+        for lon, lat, alt in _parse_coordinate_list(raw):
+            corners.append(
+                Point(
+                    name=name,
+                    description="",
+                    lon=lon,
+                    lat=lat,
+                    alt=alt,
+                    source_file=source_file,
+                )
+            )
+    return corners
+
+
+def _parse_polygon(polygon, name: str, description: str, source_file: str) -> Area | None:
+    """One Polygon element as an Area, or None if it has no usable outline."""
+    outer: list[Point] = []
+    for boundary in _find_descendants(polygon, "outerBoundaryIs"):
+        outer.extend(_ring_corners(boundary, name, source_file))
+
+    if not outer:
+        return None
+
+    holes = []
+    for boundary in _find_descendants(polygon, "innerBoundaryIs"):
+        corners = _ring_corners(boundary, name, source_file)
+        if corners:
+            holes.append(corners)
+
+    return Area(
+        name=name,
+        description=description,
+        outer=outer,
+        holes=holes,
+        source_file=source_file,
+    )
+
+
+def _parse_xml(data: bytes, result: ParseResult):
     """Return a root element, recovering from minor damage where possible."""
     strict = etree.XMLParser(resolve_entities=False, no_network=True)
     try:
@@ -90,15 +154,15 @@ def _parse_document(data: bytes, result: ParseResult):
     return root
 
 
-def parse_points(data: bytes, source_file: str) -> ParseResult:
-    """Extract every Placemark Point in a KML document.
+def parse_document(data: bytes, source_file: str) -> ParseResult:
+    """Extract every Placemark Point and Polygon in a KML document.
 
     Never raises: unreadable documents and malformed coordinates are reported
     as warnings so one bad file cannot abort a batch.
     """
     result = ParseResult()
 
-    root = _parse_document(data, result)
+    root = _parse_xml(data, result)
     if root is None:
         return result
 
@@ -114,6 +178,16 @@ def parse_points(data: bytes, source_file: str) -> ParseResult:
         for geometry in placemark.iter():
             if _local_name(geometry) in _NON_POINT_GEOMETRY:
                 result.skipped += 1
+
+        for polygon in _find_descendants(placemark, "Polygon"):
+            area = _parse_polygon(polygon, name, description, source_file)
+            if area is None:
+                label = name or "<unnamed>"
+                result.warnings.append(
+                    f"{source_file}: skipped area {label} (no usable outline)"
+                )
+                continue
+            result.areas.append(area)
 
         for point_element in _find_descendants(placemark, "Point"):
             coordinates = _find_child(point_element, "coordinates")
