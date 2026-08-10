@@ -73,7 +73,20 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytest", "numpy", "pandas", "matplotlib"],
+    # Flask and its dependencies belong to serve.py, which is never frozen --
+    # only the owner runs the server, colleagues just open a browser. They are
+    # in requirements.txt, so CI installs them before building, and excluding
+    # them explicitly keeps them out of the bundle rather than relying on
+    # run.py's import graph never happening to reach them.
+    excludes=[
+        "pytest",
+        "numpy",
+        "pandas",
+        "matplotlib",
+        "flask",
+        "werkzeug",
+        "jinja2",
+    ],
     noarchive=False,
 )
 
