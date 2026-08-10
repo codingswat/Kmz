@@ -395,3 +395,90 @@ class TestConvert:
         name_column = column_index("Name")
         names = {row[name_column].value for row in data_rows(sheet)}
         assert names == {"Alpha", "Bravo"}
+
+
+AREAS_ONLY_KML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+  <Placemark><name>Plot 12</name><Polygon><outerBoundaryIs><LinearRing>
+    <coordinates>38.20,34.60 38.21,34.60 38.21,34.61 38.20,34.61 38.20,34.60</coordinates>
+  </LinearRing></outerBoundaryIs></Polygon></Placemark>
+</Document></kml>"""
+
+
+class TestAreasOnlyBatch:
+    """A file holding shapes but no points still has something to export."""
+
+    def test_a_batch_of_only_areas_returns_a_workbook(self, signed_in):
+        response = signed_in.post(
+            "/convert",
+            data={"files": [(io.BytesIO(AREAS_ONLY_KML), "plots.kml")]},
+        )
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
+
+    def test_that_workbook_carries_the_areas_sheet(self, signed_in):
+        response = signed_in.post(
+            "/convert",
+            data={"files": [(io.BytesIO(AREAS_ONLY_KML), "plots.kml")]},
+        )
+        book = load_workbook(io.BytesIO(response.data))
+        assert "Areas" in book.sheetnames
+
+    def test_a_batch_with_neither_points_nor_areas_still_reports(self, signed_in):
+        empty = b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document/></kml>'
+        response = signed_in.post(
+            "/convert", data={"files": [(io.BytesIO(empty), "empty.kml")]}
+        )
+        assert response.status_code == 200
+        assert response.mimetype == "text/html"
+        assert "No points found" in response.get_data(as_text=True)
+
+
+class TestConvertFeedback:
+    """A successful conversion is a download, so the page never navigates and
+    nothing tells it the work finished. Without a signal the Convert button
+    looks idle while a large batch is still being read, and people submit it
+    twice."""
+
+    def test_the_page_offers_a_working_indicator(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert 'id="convert-button"' in body
+        assert "Converting" in body
+
+    def test_the_download_echoes_the_token_back_as_a_cookie(self, signed_in, samples):
+        data = payload(samples)
+        data["download_token"] = "abc123"
+        response = signed_in.post("/convert", data=data)
+        assert response.status_code == 200
+        assert "download_token=abc123" in response.headers.get("Set-Cookie", "")
+
+    def test_the_cookie_is_readable_by_the_page(self, signed_in, samples):
+        # HttpOnly would hide it from the script that has to see it.
+        data = payload(samples)
+        data["download_token"] = "abc123"
+        response = signed_in.post("/convert", data=data)
+        assert "HttpOnly" not in response.headers.get("Set-Cookie", "")
+
+    def test_no_token_means_no_cookie(self, signed_in, samples):
+        response = signed_in.post("/convert", data=payload(samples))
+        assert "download_token" not in response.headers.get("Set-Cookie", "")
+
+    def test_the_form_still_submits_without_javascript(self, signed_in, samples):
+        # The script only decorates; the plain form post must still convert.
+        response = signed_in.post("/convert", data=payload(samples))
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
+
+
+class TestAreasOnThePage:
+    def test_the_page_says_what_happens_to_areas(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert "Areas" in body or "areas" in body
+        assert "km²" in body
+
+    def test_the_summary_reports_the_area_count(self, signed_in):
+        empty = b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document/></kml>'
+        response = signed_in.post(
+            "/convert", data={"files": [(io.BytesIO(empty), "empty.kml")]}
+        )
+        assert "area(s) extracted" in response.get_data(as_text=True)

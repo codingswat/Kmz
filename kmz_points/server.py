@@ -95,17 +95,64 @@ _UPLOAD_PAGE = """<!doctype html>
   .summary { background: #f2f4f7; padding: 1rem; border-radius: .4rem;
              border: 1px solid #d5dce5; white-space: pre-line; }
   .warning { color: #b54708; }
+  .note { color: #6b7785; font-size: .9rem; }
   input, button { font: inherit; padding: .5rem; }
+  button[disabled] { opacity: .6; cursor: progress; }
+  #working { color: #6b7785; margin-left: .5rem; }
 </style>
 <h1>KML / KMZ Point Extractor</h1>
 <p>Choose one or more .kml or .kmz files. You will get one Excel workbook back.</p>
-<p>Total upload size must be under {{ upload_limit }}.</p>
-<form method="post" action="{{ url_for('convert') }}" enctype="multipart/form-data">
+<p class="note">
+  Points become one row each. Areas get their own sheet, with their size in
+  m², hectares and km², and their corners listed beneath. Routes and tracks
+  are counted but not extracted.
+</p>
+<p class="note">Total upload size must be under {{ upload_limit }}.</p>
+<form method="post" action="{{ url_for('convert') }}" enctype="multipart/form-data"
+      id="convert-form">
   <input type="file" name="files" accept=".kml,.kmz" multiple required>
-  <button type="submit">Convert</button>
+  <button type="submit" id="convert-button">Convert</button>
+  <span id="working" hidden>Converting…</span>
+  <input type="hidden" name="download_token" id="download-token">
 </form>
 {% if summary %}<div class="summary">{{ summary }}</div>{% endif %}
 {% for warning in warnings %}<p class="warning">{{ warning }}</p>{% endfor %}
+<script>
+// A successful conversion is a file download, so the page never navigates and
+// no load event ever fires -- without this the button would look idle while a
+// large batch was still being read, and people would submit it twice. The
+// server echoes the token back as a cookie once the response is on its way,
+// which is the only signal a download gives us.
+(function () {
+  var form = document.getElementById("convert-form");
+  var button = document.getElementById("convert-button");
+  var working = document.getElementById("working");
+  var field = document.getElementById("download-token");
+  if (!form || !button) return;
+
+  form.addEventListener("submit", function () {
+    var token = String(Date.now()) + String(Math.random()).slice(2);
+    field.value = token;
+    button.disabled = true;
+    working.hidden = false;
+
+    var waited = 0;
+    var poll = setInterval(function () {
+      waited += 250;
+      var arrived = document.cookie.indexOf("download_token=" + token) !== -1;
+      // The time limit matters: a batch that fails before the response is
+      // written sets no cookie, and a permanently dead button is worse than
+      // an early one.
+      if (arrived || waited > 120000) {
+        clearInterval(poll);
+        button.disabled = false;
+        working.hidden = true;
+        document.cookie = "download_token=; Max-Age=0; Path=/";
+      }
+    }, 250);
+  });
+})();
+</script>
 """
 
 
@@ -207,16 +254,28 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
             buffer = io.BytesIO()
             summary = export_to_stream(loaded, buffer)
 
-        if summary.points_extracted == 0:
+        # Areas count as much as points. A file holding nothing but shapes
+        # produces a workbook with an Areas sheet, and keying this off points
+        # alone threw that workbook away and showed the summary instead.
+        if summary.points_extracted == 0 and summary.areas_extracted == 0:
             return _upload_page(summary=summary.as_text(), warnings=summary.warnings)
 
         buffer.seek(0)
-        return send_file(
+        response = send_file(
             buffer,
             mimetype=XLSX_MIME,
             as_attachment=True,
             download_name=output_filename(),
         )
+
+        # The page cannot see a download finish -- no navigation, no load
+        # event -- so echoing the token back as a cookie is what lets it stop
+        # showing "Converting…". Not HttpOnly: the page has to read it. It
+        # carries no meaning beyond "your download started".
+        token = request.form.get("download_token", "")
+        if token:
+            response.set_cookie("download_token", token, samesite="Lax")
+        return response
 
     @app.errorhandler(413)
     def too_large(_error):
