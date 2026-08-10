@@ -1,11 +1,12 @@
 """Pipeline tests, including a full end-to-end run over generated samples."""
 
+import io
 from pathlib import Path
 
 import openpyxl
 import pytest
 
-from kmz_points.pipeline import export_to_excel, load_file, run
+from kmz_points.pipeline import export_to_excel, export_to_stream, load_file, run
 from kmz_points.samples import write_samples
 from kmz_points.table import headers
 
@@ -153,3 +154,74 @@ class TestEndToEnd:
         out = tmp_path / "chosen"
         summary = run(samples, out)
         assert summary.output_path.startswith(str(out))
+
+
+class TestExportToStream:
+    """The web service path: same batch, no file on disk."""
+
+    def test_the_stream_holds_a_readable_workbook(self, samples, tmp_path):
+        loaded = [load_file(p) for p in samples]
+        buffer = io.BytesIO()
+        export_to_stream(loaded, buffer)
+        buffer.seek(0)
+        sheet = openpyxl.load_workbook(buffer).active
+        assert sheet.max_row - 1 == SAMPLE_POINT_TOTAL
+
+    def test_the_summary_matches_the_file_based_export(self, samples, tmp_path):
+        # Guards the _collect split: the two paths must not drift.
+        loaded = [load_file(p) for p in samples]
+        to_file = export_to_excel([load_file(p) for p in samples], tmp_path)
+        to_stream = export_to_stream(loaded, io.BytesIO())
+
+        assert to_stream.files_read == to_file.files_read
+        assert to_stream.files_failed == to_file.files_failed
+        assert to_stream.points_extracted == to_file.points_extracted
+        assert to_stream.features_skipped == to_file.features_skipped
+        assert to_stream.warnings == to_file.warnings
+
+    def test_no_points_writes_nothing_to_the_stream(self, tmp_path):
+        empty = tmp_path / "empty.kml"
+        empty.write_text('<kml xmlns="http://www.opengis.net/kml/2.2"><Document/></kml>')
+        buffer = io.BytesIO()
+        summary = export_to_stream([load_file(empty)], buffer)
+        assert summary.points_extracted == 0
+        assert buffer.getvalue() == b""
+
+    def test_output_path_is_never_set_for_a_stream(self, samples):
+        loaded = [load_file(p) for p in samples]
+        assert export_to_stream(loaded, io.BytesIO()).output_path is None
+
+    def test_a_failed_file_is_named_inside_the_workbook(self, samples, tmp_path):
+        # The browser gets the file and nothing else, so this is the only
+        # place a partial failure can be reported.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        loaded = [load_file(p) for p in list(samples) + [broken]]
+
+        buffer = io.BytesIO()
+        summary = export_to_stream(loaded, buffer)
+        buffer.seek(0)
+        book = openpyxl.load_workbook(buffer)
+
+        assert summary.points_extracted == SAMPLE_POINT_TOTAL
+        assert "Issues" in book.sheetnames
+        listed = " ".join(
+            str(row[0].value) for row in book["Issues"].iter_rows(min_row=2)
+        )
+        assert "broken.kmz" in listed
+
+    def test_a_clean_batch_has_no_issues_sheet(self, samples):
+        loaded = [load_file(p) for p in samples]
+        buffer = io.BytesIO()
+        export_to_stream(loaded, buffer)
+        buffer.seek(0)
+        assert openpyxl.load_workbook(buffer).sheetnames == ["Points"]
+
+    def test_the_file_export_gains_no_issues_sheet(self, samples, tmp_path):
+        # The desktop app's output must not change shape.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        loaded = [load_file(p) for p in list(samples) + [broken]]
+
+        summary = export_to_excel(loaded, tmp_path)
+        assert openpyxl.load_workbook(summary.output_path).sheetnames == ["Points"]

@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from kmz_points.archive import ArchiveError, read_kml_bytes
 from kmz_points.excel import output_filename, write_workbook
@@ -83,16 +84,15 @@ def load_file(path: str | Path) -> LoadedFile:
     )
 
 
-def export_to_excel(
-    loaded: list[LoadedFile],
-    output_dir: str | Path,
-    when: datetime | None = None,
-) -> BatchSummary:
-    """Write every loaded point into one workbook and summarise the batch."""
-    output_dir = Path(output_dir)
-    summary = BatchSummary()
+def _collect(loaded: list[LoadedFile]) -> tuple[list[Point], BatchSummary]:
+    """Reduce a batch to its points and its summary.
 
+    Shared by both exports so the two paths cannot report a batch
+    differently.
+    """
+    summary = BatchSummary()
     points: list[Point] = []
+
     for item in loaded:
         if item.ok:
             summary.files_read += 1
@@ -104,14 +104,44 @@ def export_to_excel(
         summary.warnings.extend(item.warnings)
 
     summary.points_extracted = len(points)
+    return points, summary
+
+
+def export_to_excel(
+    loaded: list[LoadedFile],
+    output_dir: str | Path,
+    when: datetime | None = None,
+) -> BatchSummary:
+    """Write every loaded point into one workbook and summarise the batch."""
+    points, summary = _collect(loaded)
 
     if not points:
         summary.warnings.append("No points found; nothing was written.")
         return summary
 
-    destination = output_dir / output_filename(when)
+    destination = Path(output_dir) / output_filename(when)
     write_workbook(build_table_rows(points), destination)
     summary.output_path = str(destination)
+    return summary
+
+
+def export_to_stream(loaded: list[LoadedFile], stream: BinaryIO) -> BatchSummary:
+    """Write the workbook into an open binary stream.
+
+    ``output_path`` stays None -- a stream has no path -- so callers decide
+    whether a workbook was produced from ``points_extracted``.
+
+    Any warnings are written into the workbook itself. This is the browser
+    path: the response body is the file, so there is nowhere else to tell
+    someone that two of their five files were unreadable.
+    """
+    points, summary = _collect(loaded)
+
+    if not points:
+        summary.warnings.append("No points found; nothing was written.")
+        return summary
+
+    write_workbook(build_table_rows(points), stream, issues=summary.warnings)
     return summary
 
 
