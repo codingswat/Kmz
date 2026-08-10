@@ -91,20 +91,29 @@ password, binds the LAN address, prints the URL to share.
 parameter is safe: both existing call sites pass it positionally, so no keyword
 caller can break. The return value is currently unused by every caller.
 
+It also gains an optional `issues: list[str] | None = None`, which appends the
+`Issues` sheet described under "Reporting partial failures". Both existing call
+sites omit it, so the desktop app's workbook is unchanged.
+
 **`kmz_points/pipeline.py`** — `export_to_excel` currently does two jobs:
 aggregating points and warnings into a `BatchSummary`, and writing a file. The
 aggregation moves into `_collect(loaded) -> (points, summary)`, used by both
 `export_to_excel` (unchanged signature and behaviour) and a new
-`export_to_stream(loaded, stream, when) -> BatchSummary`. Without this split the
+`export_to_stream(loaded, stream) -> BatchSummary`. Without this split the
 summary logic would be duplicated and the two paths would drift.
+
+There is deliberately no `when` parameter, unlike `export_to_excel`: it would be
+unused, because a stream has no filename to stamp. The download name is chosen
+by the server, which calls `output_filename()` itself.
 
 `export_to_stream` matches `export_to_excel`'s existing early-return contract:
 when the batch yields no points it writes nothing to the stream, appends the
 same "No points found" warning, and returns. It leaves `summary.output_path` as
 `None` in all cases, because a stream has no path — so the server must decide
 whether a workbook exists from `summary.points_extracted`, not from
-`output_path`. `BatchSummary.as_text()` consequently omits its "Saved to" line
-for stream exports, which is correct for a browser response.
+`output_path`. `as_text()` therefore omits its "Saved to" line for stream
+exports, which is right: on the success path the summary is not rendered at all,
+and the failures it would have carried travel on the workbook's `Issues` sheet.
 
 **`requirements.txt`** — adds `flask` under a marked web section, so it is clear
 it is not needed for the desktop app.
@@ -126,7 +135,8 @@ One conversion, start to finish:
 6. Each file goes through the existing `load_file`, which never raises and
    reports unreadable files as errors on the returned object.
 7. `export_to_stream` writes one workbook into a `BytesIO`, or writes nothing if
-   the batch yielded no points.
+   the batch yielded no points. Any warnings are written into the workbook
+   itself, on a second sheet named `Issues` — see "Reporting partial failures".
 8. If `summary.points_extracted` is greater than zero, the response is that
    buffer as
    `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, named
@@ -148,9 +158,33 @@ rather than converting partial success into an error:
 | Not authenticated | Redirect to `/`, nothing converted |
 | Wrong password | Form re-rendered with an error |
 | No files selected | Upload page with a message |
-| Some files unreadable | Workbook returned; failures listed in the summary |
+| Some files unreadable | Workbook returned, with the failures on its `Issues` sheet |
 | No points in any file | Upload page with the summary, no download |
 | Upload over the size cap | HTTP 413 |
+
+## Reporting partial failures
+
+A batch where some files are unreadable still exports every point it could
+read. On the desktop that partial failure is reported in the window; in a
+browser there is nowhere to put it, because the response body **is** the
+workbook. An earlier draft of this spec required the failures to reach the user
+and separately prescribed returning the raw file, which cannot both be true. A
+prototype confirmed the consequence: three good files plus a corrupt one
+returned a workbook, `files_failed=1`, and no mention of the corrupt file
+anywhere in the response.
+
+Resolved by putting the failures inside the artifact. When a batch produces any
+warnings, the workbook gains a second sheet named `Issues` listing them, after
+the `Points` sheet so that opening the file still lands on the data. The
+information then survives being emailed on, which a web page would not.
+
+This applies to the web path only. `export_to_excel` passes no issues, so the
+desktop app's output is unchanged.
+
+Rejected alternatives: a results page carrying a one-shot download link, which
+would mean holding the workbook in memory between two requests and so
+contradict retaining nothing; and reporting the failures in a response header,
+which no colleague would ever see.
 
 ## Security
 
@@ -209,8 +243,10 @@ unchanged on all four CI platforms.
 - wrong password rejected; correct password establishes a session
 - the three generated samples return 200, the xlsx content type, and a workbook
   that reopens with 7 data rows
-- one corrupt file among good ones still returns a workbook, and the summary
-  names the failure
+- one corrupt file among good ones still returns a workbook, and its `Issues`
+  sheet names the failure. Asserted by loading the returned workbook, not by
+  searching the response bytes: an xlsx is a zip, so the text is compressed and
+  a substring check fails even when the sheet is there
 - a batch yielding zero points returns the summary and no download
 - an upload over the cap returns 413
 - a `../../evil.kml` filename stays inside the temp directory

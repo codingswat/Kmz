@@ -30,7 +30,12 @@
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `write_workbook(rows: list[list], target: str | Path | BinaryIO) -> Path | None` — returns the `Path` written when given a path, `None` when given a stream. Both existing call sites pass the target positionally, so the rename from `path` to `target` breaks nothing.
+- Produces: `write_workbook(rows: list[list], target: str | Path | BinaryIO, issues: list[str] | None = None) -> Path | None` — returns the `Path` written when given a path, `None` when given a stream. Both existing call sites pass the target positionally, so the rename from `path` to `target` breaks nothing, and both omit `issues`, so the desktop app's output is byte-for-byte unchanged.
+
+`issues` exists because a browser download has nowhere to put a warning: the
+response body is the workbook itself. When a batch part-fails, the failures ride
+along inside the file on a second sheet named `Issues`. Only the web path passes
+it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -62,6 +67,42 @@ class TestWritingToAStream:
     def test_a_path_target_still_returns_its_path(self, tmp_path):
         target = tmp_path / "out.xlsx"
         assert write_workbook(build_table_rows([make_point()]), target) == target
+
+
+class TestIssuesSheet:
+    """A browser download has nowhere to show a warning, so failures ride
+    along inside the workbook."""
+
+    def test_no_issues_means_no_second_sheet(self):
+        buffer = io.BytesIO()
+        write_workbook(build_table_rows([make_point()]), buffer)
+        buffer.seek(0)
+        assert load_workbook(buffer).sheetnames == ["Points"]
+
+    def test_issues_are_listed_on_their_own_sheet(self):
+        buffer = io.BytesIO()
+        write_workbook(
+            build_table_rows([make_point()]),
+            buffer,
+            issues=["broken.kmz: not a readable KMZ archive"],
+        )
+        buffer.seek(0)
+        book = load_workbook(buffer)
+        assert book.sheetnames == ["Points", "Issues"]
+        listed = [row[0].value for row in book["Issues"].iter_rows(min_row=2)]
+        assert listed == ["broken.kmz: not a readable KMZ archive"]
+
+    def test_the_points_sheet_stays_first(self):
+        buffer = io.BytesIO()
+        write_workbook(build_table_rows([make_point()]), buffer, issues=["a problem"])
+        buffer.seek(0)
+        # Opening the file must land on the data, not on the complaints.
+        assert load_workbook(buffer).active.title == "Points"
+
+    def test_an_empty_issue_list_adds_no_sheet(self, tmp_path):
+        target = tmp_path / "out.xlsx"
+        write_workbook(build_table_rows([make_point()]), target, issues=[])
+        assert load_workbook(target).sheetnames == ["Points"]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -81,11 +122,19 @@ from typing import BinaryIO
 Replace the signature and docstring:
 
 ```python
-def write_workbook(rows: list[list], target: str | Path | BinaryIO) -> Path | None:
+def write_workbook(
+    rows: list[list],
+    target: str | Path | BinaryIO,
+    issues: list[str] | None = None,
+) -> Path | None:
     """Write rows to an xlsx file, or into an open binary stream.
 
     The web service needs the workbook in memory, so a stream is accepted as
     well as a path. Returns the path written, or None for a stream.
+
+    ``issues`` adds a second sheet naming files that could not be read. A
+    browser download has nowhere else to report them: the response body is the
+    workbook. The desktop app passes nothing and its output is unchanged.
     """
     book = Workbook()
 ```
@@ -103,6 +152,15 @@ Then replace the final two lines of the function:
 with:
 
 ```python
+    if issues:
+        # Appended after Points, so opening the file lands on the data.
+        notes = book.create_sheet("Issues")
+        notes.append(["Issue"])
+        notes["A1"].font = Font(bold=True)
+        for line in issues:
+            notes.append([_fit(line)])
+        notes.column_dimensions["A"].width = _MAX_WIDTH
+
     if isinstance(target, (str, Path)):
         path = Path(target)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +242,41 @@ class TestExportToStream:
     def test_output_path_is_never_set_for_a_stream(self, samples):
         loaded = [load_file(p) for p in samples]
         assert export_to_stream(loaded, io.BytesIO()).output_path is None
+
+    def test_a_failed_file_is_named_inside_the_workbook(self, samples, tmp_path):
+        # The browser gets the file and nothing else, so this is the only
+        # place a partial failure can be reported.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        loaded = [load_file(p) for p in list(samples) + [broken]]
+
+        buffer = io.BytesIO()
+        summary = export_to_stream(loaded, buffer)
+        buffer.seek(0)
+        book = openpyxl.load_workbook(buffer)
+
+        assert summary.points_extracted == SAMPLE_POINT_TOTAL
+        assert "Issues" in book.sheetnames
+        listed = " ".join(
+            str(row[0].value) for row in book["Issues"].iter_rows(min_row=2)
+        )
+        assert "broken.kmz" in listed
+
+    def test_a_clean_batch_has_no_issues_sheet(self, samples):
+        loaded = [load_file(p) for p in samples]
+        buffer = io.BytesIO()
+        export_to_stream(loaded, buffer)
+        buffer.seek(0)
+        assert openpyxl.load_workbook(buffer).sheetnames == ["Points"]
+
+    def test_the_file_export_gains_no_issues_sheet(self, samples, tmp_path):
+        # The desktop app's output must not change shape.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        loaded = [load_file(p) for p in list(samples) + [broken]]
+
+        summary = export_to_excel(loaded, tmp_path)
+        assert openpyxl.load_workbook(summary.output_path).sheetnames == ["Points"]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -249,6 +342,10 @@ def export_to_stream(loaded: list[LoadedFile], stream: BinaryIO) -> BatchSummary
 
     ``output_path`` stays None -- a stream has no path -- so callers decide
     whether a workbook was produced from ``points_extracted``.
+
+    Any warnings are written into the workbook itself. This is the browser
+    path: the response body is the file, so there is nowhere else to tell
+    someone that two of their five files were unreadable.
     """
     points, summary = _collect(loaded)
 
@@ -256,7 +353,7 @@ def export_to_stream(loaded: list[LoadedFile], stream: BinaryIO) -> BatchSummary
         summary.warnings.append("No points found; nothing was written.")
         return summary
 
-    write_workbook(build_table_rows(points), stream)
+    write_workbook(build_table_rows(points), stream, issues=summary.warnings)
     return summary
 ```
 
@@ -723,6 +820,25 @@ class TestConvert:
         response = signed_in.post("/convert", data=payload(list(samples) + [broken]))
         assert response.status_code == 200
         assert response.mimetype == XLSX_MIME
+        sheet = load_workbook(io.BytesIO(response.data))["Points"]
+        assert sheet.max_row - 1 == 7  # the good files still all came through
+
+    def test_the_failure_is_named_in_the_downloaded_workbook(
+        self, signed_in, samples, tmp_path
+    ):
+        # Not `b"broken.kmz" in response.data`: an xlsx is a zip, so the text
+        # is compressed and that check fails even when the sheet is present.
+        # Confirmed against a prototype before this test was written.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        response = signed_in.post("/convert", data=payload(list(samples) + [broken]))
+
+        book = load_workbook(io.BytesIO(response.data))
+        assert "Issues" in book.sheetnames
+        listed = " ".join(
+            str(row[0].value) for row in book["Issues"].iter_rows(min_row=2)
+        )
+        assert "broken.kmz" in listed
 
     def test_a_batch_with_no_points_returns_a_summary_not_a_download(
         self, signed_in, tmp_path
