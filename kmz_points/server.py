@@ -8,7 +8,9 @@ directory and the workbook streams back from memory.
 from __future__ import annotations
 
 import hmac
+import io
 import secrets
+import tempfile
 from pathlib import Path
 
 from flask import (
@@ -16,10 +18,14 @@ from flask import (
     redirect,
     render_template_string,
     request,
+    send_file,
     session,
     url_for,
 )
 from werkzeug.utils import secure_filename
+
+from kmz_points.excel import output_filename
+from kmz_points.pipeline import LoadedFile, export_to_stream, load_file
 
 ALLOWED_SUFFIXES = (".kml", ".kmz")
 
@@ -28,6 +34,8 @@ ALLOWED_SUFFIXES = (".kml", ".kmz")
 MAX_STEM = 100
 
 DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def safe_upload_name(raw: str, index: int) -> str | None:
@@ -131,6 +139,58 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
 
     @app.post("/convert")
     def convert():
-        raise NotImplementedError("Task 5")
+        if not signed_in():
+            return redirect(url_for("index"))
+
+        uploads = [f for f in request.files.getlist("files") if f.filename]
+        if not uploads:
+            return (
+                render_template_string(
+                    _UPLOAD_PAGE,
+                    summary=None,
+                    warnings=["Choose at least one .kml or .kmz file."],
+                ),
+                400,
+            )
+
+        # Everything happens inside here and is gone when the block exits,
+        # whatever the outcome.
+        with tempfile.TemporaryDirectory() as workspace:
+            loaded: list[LoadedFile] = []
+
+            for index, upload in enumerate(uploads):
+                display = Path(upload.filename).name or "upload"
+                name = safe_upload_name(upload.filename, index)
+
+                if name is None:
+                    # Report it the same way an unreadable file is reported,
+                    # so it counts as a failure in the summary.
+                    loaded.append(
+                        LoadedFile(
+                            path=Path(display),
+                            error=f"{display}: not a .kml or .kmz file",
+                        )
+                    )
+                    continue
+
+                destination = Path(workspace) / name
+                upload.save(destination)
+                loaded.append(load_file(destination))
+
+            buffer = io.BytesIO()
+            summary = export_to_stream(loaded, buffer)
+
+        if summary.points_extracted == 0:
+            return render_template_string(
+                _UPLOAD_PAGE, summary=summary.as_text(), warnings=summary.warnings
+            )
+
+        buffer.seek(0)
+        return send_file(
+            buffer,
+            mimetype=XLSX_MIME,
+            as_attachment=True,
+            download_name=output_filename(),
+        )
 
     return app

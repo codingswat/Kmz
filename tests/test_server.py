@@ -4,8 +4,14 @@ Flask's test client, so these need no network and no display and run
 unchanged on every CI platform.
 """
 
-import pytest
+import io
+import tempfile
+from pathlib import Path
 
+import pytest
+from openpyxl import load_workbook
+
+from kmz_points.samples import write_samples
 from kmz_points.server import create_app, safe_upload_name
 
 PASSWORD = "correct horse"
@@ -22,6 +28,21 @@ def client():
 def signed_in(client):
     client.post("/login", data={"password": PASSWORD})
     return client
+
+
+@pytest.fixture
+def samples(tmp_path):
+    return write_samples(tmp_path / "in")
+
+
+def payload(paths):
+    """The multipart body the convert route expects."""
+    return {
+        "files": [(io.BytesIO(Path(p).read_bytes()), Path(p).name) for p in paths]
+    }
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 class TestSafeUploadName:
@@ -100,3 +121,110 @@ class TestPasswordGate:
 
     def test_a_non_ascii_attempt_against_an_ascii_password_is_refused(self, client):
         assert client.post("/login", data={"password": "wrøng"}).status_code == 401
+
+
+class TestConvert:
+    def test_converting_needs_a_session(self, client, samples):
+        response = client.post("/convert", data=payload(samples))
+        assert response.status_code == 302
+
+    def test_the_samples_come_back_as_a_workbook(self, signed_in, samples):
+        response = signed_in.post("/convert", data=payload(samples))
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
+        sheet = load_workbook(io.BytesIO(response.data)).active
+        assert sheet.max_row - 1 == 7  # header plus the 7 sample points
+
+    def test_the_download_is_named_by_the_usual_pattern(self, signed_in, samples):
+        response = signed_in.post("/convert", data=payload(samples))
+        disposition = response.headers["Content-Disposition"]
+        assert "points_" in disposition and disposition.endswith(".xlsx")
+
+    def test_a_broken_file_does_not_stop_the_good_ones(self, signed_in, samples, tmp_path):
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        response = signed_in.post("/convert", data=payload(list(samples) + [broken]))
+        assert response.status_code == 200
+        assert response.mimetype == XLSX_MIME
+        sheet = load_workbook(io.BytesIO(response.data))["Points"]
+        assert sheet.max_row - 1 == 7  # the good files still all came through
+
+    def test_the_failure_is_named_in_the_downloaded_workbook(
+        self, signed_in, samples, tmp_path
+    ):
+        # Not `b"broken.kmz" in response.data`: an xlsx is a zip, so the text
+        # is compressed and that check fails even when the sheet is present.
+        # Confirmed against a prototype before this test was written.
+        broken = tmp_path / "broken.kmz"
+        broken.write_bytes(b"this is not a zip")
+        response = signed_in.post("/convert", data=payload(list(samples) + [broken]))
+
+        book = load_workbook(io.BytesIO(response.data))
+        assert "Issues" in book.sheetnames
+        listed = " ".join(
+            str(row[0].value) for row in book["Issues"].iter_rows(min_row=2)
+        )
+        assert "broken.kmz" in listed
+
+    def test_a_batch_with_no_points_returns_a_summary_not_a_download(
+        self, signed_in, tmp_path
+    ):
+        empty = tmp_path / "empty.kml"
+        empty.write_text('<kml xmlns="http://www.opengis.net/kml/2.2"><Document/></kml>')
+        response = signed_in.post("/convert", data=payload([empty]))
+        assert response.status_code == 200
+        assert response.mimetype == "text/html"
+        assert "No points found" in response.get_data(as_text=True)
+
+    def test_a_non_kml_upload_is_reported_not_crashed(self, signed_in, tmp_path):
+        notes = tmp_path / "notes.txt"
+        notes.write_text("nothing to see")
+        response = signed_in.post("/convert", data=payload([notes]))
+        assert response.status_code == 200
+        assert "notes.txt" in response.get_data(as_text=True)
+
+    def test_sending_no_files_is_reported(self, signed_in):
+        response = signed_in.post("/convert", data={"files": []})
+        assert response.status_code == 400
+        assert "at least one" in response.get_data(as_text=True).lower()
+
+    def test_an_oversized_upload_is_refused(self, samples):
+        app = create_app(PASSWORD, max_upload_bytes=1000)
+        app.config["TESTING"] = True
+        small = app.test_client()
+        small.post("/login", data={"password": PASSWORD})
+        response = small.post(
+            "/convert", data={"files": [(io.BytesIO(b"x" * 5000), "big.kml")]}
+        )
+        assert response.status_code == 413
+
+    def test_nothing_is_left_behind_on_disk(self, signed_in, samples, monkeypatch, tmp_path):
+        # tempfile.tempdir is pinned to a directory only this test uses.
+        # Scanning the shared system temp directory instead would fail
+        # whenever any unrelated process happened to create a file mid-test.
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+        signed_in.post("/convert", data=payload(samples))
+
+        assert list(scratch.iterdir()) == []
+
+    def test_a_traversal_filename_cannot_escape_the_workspace(
+        self, signed_in, samples, monkeypatch, tmp_path
+    ):
+        # The same check as safe_upload_name's unit test, but driven through
+        # the real route, which is where it actually matters.
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+        body = Path(samples[0]).read_bytes()
+        response = signed_in.post(
+            "/convert", data={"files": [(io.BytesIO(body), "../../evil.kml")]}
+        )
+
+        assert response.status_code == 200
+        assert list(scratch.iterdir()) == []
+        assert not (tmp_path / "evil.kml").exists()
+        assert not (tmp_path.parent / "evil.kml").exists()
