@@ -1,9 +1,11 @@
 """Excel writer tests -- every assertion is made against a reopened workbook."""
 
+import io
 from datetime import datetime
 
 import openpyxl
 import pytest
+from openpyxl import load_workbook
 
 from kmz_points.excel import EXCEL_CELL_LIMIT, output_filename, write_workbook
 from kmz_points.models import Point
@@ -114,3 +116,58 @@ class TestRows:
         book = write_and_reopen(tmp_path, [])
         assert [c.value for c in book.active[1]] == headers()
         assert book.active.max_row == 1
+
+
+class TestWritingToAStream:
+    """The web service needs a workbook in memory, never on disk."""
+
+    def test_a_stream_target_produces_a_readable_workbook(self):
+        buffer = io.BytesIO()
+        write_workbook(build_table_rows([make_point()]), buffer)
+        buffer.seek(0)
+        sheet = load_workbook(buffer).active
+        assert [c.value for c in sheet[1]] == headers()
+        assert sheet.max_row == 2
+
+    def test_a_stream_target_returns_no_path(self):
+        assert write_workbook(build_table_rows([make_point()]), io.BytesIO()) is None
+
+    def test_a_path_target_still_returns_its_path(self, tmp_path):
+        target = tmp_path / "out.xlsx"
+        assert write_workbook(build_table_rows([make_point()]), target) == target
+
+
+class TestIssuesSheet:
+    """A browser download has nowhere to show a warning, so failures ride
+    along inside the workbook."""
+
+    def test_no_issues_means_no_second_sheet(self):
+        buffer = io.BytesIO()
+        write_workbook(build_table_rows([make_point()]), buffer)
+        buffer.seek(0)
+        assert load_workbook(buffer).sheetnames == ["Points"]
+
+    def test_issues_are_listed_on_their_own_sheet(self):
+        buffer = io.BytesIO()
+        write_workbook(
+            build_table_rows([make_point()]),
+            buffer,
+            issues=["broken.kmz: not a readable KMZ archive"],
+        )
+        buffer.seek(0)
+        book = load_workbook(buffer)
+        assert book.sheetnames == ["Points", "Issues"]
+        listed = [row[0].value for row in book["Issues"].iter_rows(min_row=2)]
+        assert listed == ["broken.kmz: not a readable KMZ archive"]
+
+    def test_the_points_sheet_stays_first(self):
+        buffer = io.BytesIO()
+        write_workbook(build_table_rows([make_point()]), buffer, issues=["a problem"])
+        buffer.seek(0)
+        # Opening the file must land on the data, not on the complaints.
+        assert load_workbook(buffer).active.title == "Points"
+
+    def test_an_empty_issue_list_adds_no_sheet(self, tmp_path):
+        target = tmp_path / "out.xlsx"
+        write_workbook(build_table_rows([make_point()]), target, issues=[])
+        assert load_workbook(target).sheetnames == ["Points"]

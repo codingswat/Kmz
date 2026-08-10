@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -41,9 +42,20 @@ def _column_width(header: str, values: list) -> float:
     return min(max(longest + _WIDTH_PADDING, _MIN_WIDTH), _MAX_WIDTH)
 
 
-def write_workbook(rows: list[list], path: str | Path) -> Path:
-    """Write rows to an xlsx file and return the path written."""
-    path = Path(path)
+def write_workbook(
+    rows: list[list],
+    target: str | Path | BinaryIO,
+    issues: list[str] | None = None,
+) -> Path | None:
+    """Write rows to an xlsx file, or into an open binary stream.
+
+    The web service needs the workbook in memory, so a stream is accepted as
+    well as a path. Returns the path written, or None for a stream.
+
+    ``issues`` adds a second sheet naming files that could not be read. A
+    browser download has nowhere else to report them: the response body is the
+    workbook. The desktop app passes nothing and its output is unchanged.
+    """
     book = Workbook()
     sheet = book.active
     sheet.title = "Points"
@@ -65,6 +77,20 @@ def write_workbook(rows: list[list], path: str | Path) -> Path:
             column.header, [row[index - 1] for row in rows]
         )
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    book.save(path)
-    return path
+    if issues:
+        # Appended after Points, so opening the file lands on the data.
+        notes = book.create_sheet("Issues")
+        notes.append(["Issue"])
+        notes["A1"].font = Font(bold=True)
+        for line in issues:
+            notes.append([_fit(line)])
+        notes.column_dimensions["A"].width = _MAX_WIDTH
+
+    if isinstance(target, (str, Path)):
+        path = Path(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        book.save(path)
+        return path
+
+    book.save(target)
+    return None
