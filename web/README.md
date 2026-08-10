@@ -42,14 +42,50 @@ right. The defence is that cross-check: one set of inputs with known-correct
 answers that both implementations must satisfy. It is worth keeping, and
 worth running whenever either side changes.
 
+## Running it
+
+Any static file server will do — there is no build step and no dependency:
+
+```bash
+cd web && python3 -m http.server 8777
+```
+
+Then open `http://127.0.0.1:8777/`. To embed it in another platform, copy
+`src/` and call `convert(files)` from `src/pipeline.js`; it takes
+`{name, bytes}` and returns `{summary, workbook, filename}`.
+
+## Does it agree with the Python?
+
+Yes, checked at every level rather than assumed:
+
+| Check | Result |
+|---|---|
+| UTM and MGRS, 410 coordinates | 0 mismatches, exact to the metre |
+| Area measurement, 132 shapes | 0 mismatches (worst 0.0007 m², float noise) |
+| KMZ extraction | byte-identical to Python's `zipfile` |
+| KML parsing, real samples | points, areas and skipped counts all match |
+| **The finished workbook** | **identical** — sheets, sizes, merges, freeze panes, every cell |
+
+The last row is the one that matters: the same three sample files through both
+implementations produce workbooks that openpyxl cannot tell apart.
+
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `src/zip.js` | Minimal ZIP writer — stored entries, no dependency |
-| `src/xlsx.js` | Workbook writer: styles, merges, sheets |
+| `index.html` | The page: drop zone, convert, download |
+| `src/pipeline.js` | Orchestration — the entry point to embed |
+| `src/kml.js` | Point and polygon extraction (needs a DOM) |
+| `src/archive.js` | KMZ → KML bytes |
+| `src/unzip.js` | ZIP reader, with the decompression-bomb cap |
+| `src/geometry.js` | Area measurement |
 | `src/convert.js` | Coordinate conversions, including UTM and MGRS |
-| `spike/` | The proofs above, kept as runnable evidence |
+| `src/table.js` | The 23 columns and four bands |
+| `src/workbook.js` | The banded layout, banners and sheets |
+| `src/xlsx.js` | Workbook writer: styles, merges, sheets |
+| `src/zip.js` | Minimal ZIP writer |
+| `spike/` | The cross-checks, kept as runnable evidence |
 
-Everything runs unchanged in a browser and in Node, which is what lets the
-cross-check run offline.
+Everything except `kml.js` runs unchanged in Node, which is what lets most of
+the cross-checking happen offline. `kml.js` needs a DOM, so its check runs in
+a browser.

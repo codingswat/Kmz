@@ -1,0 +1,128 @@
+{
+ "simple.kml": {
+  "kml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n  <Document>\n    <name>Simple</name>\n    <Placemark>\n      <name>Alpha</name>\n      <description>A plain description</description>\n      <Point><coordinates>38.123456,34.567890,120.5</coordinates></Point>\n    </Placemark>\n    <Placemark>\n      <name>Bravo</name>\n      <description>Second point</description>\n      <Point><coordinates>-78.467834,-0.180653</coordinates></Point>\n    </Placemark>\n  </Document>\n</kml>\n",
+  "points": [
+   {
+    "name": "Alpha",
+    "description": "A plain description",
+    "lon": 38.123456,
+    "lat": 34.56789,
+    "alt": 120.5
+   },
+   {
+    "name": "Bravo",
+    "description": "Second point",
+    "lon": -78.467834,
+    "lat": -0.180653,
+    "alt": null
+   }
+  ],
+  "areas": [],
+  "skipped": 0
+ },
+ "nested.kml": {
+  "kml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n  <Document>\n    <name>Nested</name>\n    <Folder>\n      <name>Outer folder</name>\n      <Placemark>\n        <name>Charlie</name>\n        <description><![CDATA[<b>Rich</b> text with a <a href=\"http://example.test\">link</a><br/>and a second line]]></description>\n        <Point><coordinates>151.215297,-33.856784,58</coordinates></Point>\n      </Placemark>\n      <Folder>\n        <name>Inner folder</name>\n        <Placemark>\n          <name>Delta</name>\n          <description><![CDATA[<p>Paragraph one</p><p>Paragraph two</p>]]></description>\n          <Point><coordinates>2.294481,48.858370</coordinates></Point>\n        </Placemark>\n        <Placemark>\n          <name>Echo cluster</name>\n          <description>Has a MultiGeometry</description>\n          <MultiGeometry>\n            <Point><coordinates>-0.127758,51.507351,11</coordinates></Point>\n          </MultiGeometry>\n        </Placemark>\n      </Folder>\n      <Placemark>\n        <name>A route</name>\n        <LineString>\n          <coordinates>1,2 3,4 5,6</coordinates>\n        </LineString>\n      </Placemark>\n      <Placemark>\n        <name>An area</name>\n        <description>A square kilometre with a courtyard cut out of it</description>\n        <Polygon>\n          <outerBoundaryIs><LinearRing>\n            <coordinates>\n              38.200000,34.600000 38.210900,34.600000\n              38.210900,34.609000 38.200000,34.609000\n              38.200000,34.600000\n            </coordinates>\n          </LinearRing></outerBoundaryIs>\n          <innerBoundaryIs><LinearRing>\n            <coordinates>\n              38.203000,34.602000 38.205000,34.602000\n              38.205000,34.604000 38.203000,34.604000\n            </coordinates>\n          </LinearRing></innerBoundaryIs>\n        </Polygon>\n      </Placemark>\n    </Folder>\n  </Document>\n</kml>\n",
+  "points": [
+   {
+    "name": "Charlie",
+    "description": "Rich text with a link and a second line",
+    "lon": 151.215297,
+    "lat": -33.856784,
+    "alt": 58.0
+   },
+   {
+    "name": "Delta",
+    "description": "Paragraph one Paragraph two",
+    "lon": 2.294481,
+    "lat": 48.85837,
+    "alt": null
+   },
+   {
+    "name": "Echo cluster",
+    "description": "Has a MultiGeometry",
+    "lon": -0.127758,
+    "lat": 51.507351,
+    "alt": 11.0
+   }
+  ],
+  "areas": [
+   {
+    "name": "An area",
+    "description": "A square kilometre with a courtyard cut out of it",
+    "outer": [
+     {
+      "lon": 38.2,
+      "lat": 34.6,
+      "alt": null
+     },
+     {
+      "lon": 38.2109,
+      "lat": 34.6,
+      "alt": null
+     },
+     {
+      "lon": 38.2109,
+      "lat": 34.609,
+      "alt": null
+     },
+     {
+      "lon": 38.2,
+      "lat": 34.609,
+      "alt": null
+     },
+     {
+      "lon": 38.2,
+      "lat": 34.6,
+      "alt": null
+     }
+    ],
+    "holes": [
+     [
+      {
+       "lon": 38.203,
+       "lat": 34.602,
+       "alt": null
+      },
+      {
+       "lon": 38.205,
+       "lat": 34.602,
+       "alt": null
+      },
+      {
+       "lon": 38.205,
+       "lat": 34.604,
+       "alt": null
+      },
+      {
+       "lon": 38.203,
+       "lat": 34.604,
+       "alt": null
+      }
+     ]
+    ]
+   }
+  ],
+  "skipped": 1
+ },
+ "sample.kmz": {
+  "kml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n  <Document>\n    <name>Zipped</name>\n    <Placemark>\n      <name>Foxtrot</name>\n      <description>Inside a KMZ</description>\n      <Point><coordinates>139.691706,35.689487,40</coordinates></Point>\n    </Placemark>\n    <Placemark>\n      <name>Golf</name>\n      <description>Also inside the KMZ</description>\n      <Point><coordinates>-122.419416,37.774929</coordinates></Point>\n    </Placemark>\n  </Document>\n</kml>\n",
+  "points": [
+   {
+    "name": "Foxtrot",
+    "description": "Inside a KMZ",
+    "lon": 139.691706,
+    "lat": 35.689487,
+    "alt": 40.0
+   },
+   {
+    "name": "Golf",
+    "description": "Also inside the KMZ",
+    "lon": -122.419416,
+    "lat": 37.774929,
+    "alt": null
+   }
+  ],
+  "areas": [],
+  "skipped": 0
+ }
+}
