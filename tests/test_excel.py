@@ -193,12 +193,10 @@ class TestOversizedContent:
 
 
 class TestFormulaInjection:
-    """A string cell beginning with =, +, - or @ is liable to be read as a
-    formula rather than text -- by openpyxl's own type inference for a
-    leading "=", and by Excel itself for the others. point.name and
-    point.description come straight from KML content, so this is not
-    hypothetical: an attacker who controls a placemark's name controls what
-    lands in the workbook."""
+    """openpyxl infers a type from the string it is handed, and a leading "="
+    becomes a live formula built from content we did not write. point.name and
+    point.description come straight from KML, so an attacker controlling a
+    placemark's name controls what lands in the workbook."""
 
     def test_a_name_starting_with_equals_lands_as_text_not_a_formula(self, tmp_path):
         point = make_point(name='=HYPERLINK("http://evil.example","Click")+A1')
@@ -211,6 +209,23 @@ class TestFormulaInjection:
         sheet = write_and_reopen(tmp_path, [make_point(name="Alpha")]).active
         cell = first_data_row(sheet)[column_index("Name")]
         assert cell.value == "Alpha"
+
+    @pytest.mark.parametrize("name", ["-Alpha", "+44 7700 900000", "@site", "@1"])
+    def test_other_leading_symbols_are_left_alone(self, tmp_path, name):
+        # These matter when a user types them into a cell or imports a CSV,
+        # but a string written into an xlsx stays a string. Escaping them
+        # corrupted ordinary content -- bulleted names, phone numbers -- with
+        # an apostrophe that then travelled with every copy and re-import.
+        sheet = write_and_reopen(tmp_path, [make_point(name=name)]).active
+        cell = first_data_row(sheet)[column_index("Name")]
+        assert cell.value == name
+        assert cell.data_type != "f"
+
+    def test_a_leading_minus_is_still_a_string_not_a_formula(self, tmp_path):
+        # The claim the previous escaping rested on, checked rather than
+        # assumed: openpyxl does not turn these into formulas.
+        sheet = write_and_reopen(tmp_path, [make_point(name="-2+3")]).active
+        assert first_data_row(sheet)[column_index("Name")].data_type == "s"
 
 
 class TestRows:

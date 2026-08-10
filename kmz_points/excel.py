@@ -66,25 +66,28 @@ def output_filename(when: datetime | None = None) -> str:
     return f"points_{when:%Y%m%d_%H%M}.xlsx"
 
 
-# The standard formula-injection triggers: a string opening with any of
-# these is liable to be interpreted as a formula, either by openpyxl's own
-# type inference (which flags a leading "=" as data_type "f", turning the
-# literal cell content into a live formula) or by Excel itself for the
-# others. This bites more than one call site: an uploaded filename ends up
-# in an Issues warning, and point.name / point.description come straight
-# from attacker-controlled KML content, so the guard lives here rather than
-# at any single caller.
-_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+# Only "=" needs defusing in an xlsx. openpyxl infers a type from the string
+# it is handed, and a leading "=" becomes data_type "f" -- a live formula
+# built from content we did not write. point.name and point.description come
+# straight from KML, and an uploaded filename reaches the Issues sheet, so
+# the guard lives here rather than at any single caller.
+#
+# "+", "-" and "@" are deliberately NOT included. They matter when a user
+# types them into a cell, or when a CSV is imported, but a string written
+# into an xlsx stays a string: openpyxl gives all three data_type "s". Adding
+# them cost real data instead -- a placemark called "-Alpha" or a description
+# holding "+44 7700 900000" was rewritten with a leading apostrophe that then
+# travelled with every copy, sort and re-import.
+_FORMULA_TRIGGER = "="
 
 
 def _fit(value):
-    """Clamp a cell value to what Excel will accept, and defuse formula
-    injection in any string that reaches a cell."""
+    """Clamp a cell value to what Excel will accept, and stop a leading "="
+    from being turned into a live formula."""
     if not isinstance(value, str):
         return value
-    if value.startswith(_FORMULA_TRIGGERS):
-        # A leading apostrophe forces Excel (and openpyxl's type inference)
-        # to treat the rest as literal text rather than a formula.
+    if value.startswith(_FORMULA_TRIGGER):
+        # A leading apostrophe makes openpyxl store the rest as literal text.
         value = "'" + value
     if len(value) > EXCEL_CELL_LIMIT:
         return value[: EXCEL_CELL_LIMIT - 3] + "..."
