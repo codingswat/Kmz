@@ -63,6 +63,24 @@ class TestMain:
         assert "password" in capsys.readouterr().out.lower()
         assert called["value"] is False
 
+    def test_a_password_with_stray_whitespace_is_passed_stripped(
+        self, monkeypatch, capsys
+    ):
+        # password.strip() was only used to decide whether to proceed; the
+        # untouched, whitespace-padded value was what actually reached
+        # create_app. A colleague typing the password exactly as given would
+        # then fail to log in against the padded version silently stored as
+        # the real password.
+        monkeypatch.setenv("KMZ_PASSWORD", "  hunter2  ")
+        started = {}
+
+        def fake_run(**kwargs):
+            started.update(kwargs)
+
+        monkeypatch.setattr(serve, "_run_app", fake_run)
+        assert serve.main() == 0
+        assert started["password"] == "hunter2"
+
     def test_the_shared_url_is_printed(self, monkeypatch, capsys):
         monkeypatch.setenv("KMZ_PASSWORD", "hunter2")
         started = {}

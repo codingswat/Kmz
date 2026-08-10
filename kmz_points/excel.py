@@ -15,7 +15,6 @@ from kmz_points.table import (
     NUMBER_INDEX,
     SOURCE_FILE_INDEX,
     bands,
-    headers,
 )
 
 # Hard limit imposed by the xlsx format; a longer string makes the file
@@ -62,9 +61,27 @@ def output_filename(when: datetime | None = None) -> str:
     return f"points_{when:%Y%m%d_%H%M}.xlsx"
 
 
+# The standard formula-injection triggers: a string opening with any of
+# these is liable to be interpreted as a formula, either by openpyxl's own
+# type inference (which flags a leading "=" as data_type "f", turning the
+# literal cell content into a live formula) or by Excel itself for the
+# others. This bites more than one call site: an uploaded filename ends up
+# in an Issues warning, and point.name / point.description come straight
+# from attacker-controlled KML content, so the guard lives here rather than
+# at any single caller.
+_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+
+
 def _fit(value):
-    """Clamp a cell value to what Excel will accept."""
-    if isinstance(value, str) and len(value) > EXCEL_CELL_LIMIT:
+    """Clamp a cell value to what Excel will accept, and defuse formula
+    injection in any string that reaches a cell."""
+    if not isinstance(value, str):
+        return value
+    if value.startswith(_FORMULA_TRIGGERS):
+        # A leading apostrophe forces Excel (and openpyxl's type inference)
+        # to treat the rest as literal text rather than a formula.
+        value = "'" + value
+    if len(value) > EXCEL_CELL_LIMIT:
         return value[: EXCEL_CELL_LIMIT - 3] + "..."
     return value
 
@@ -134,7 +151,7 @@ def _write_body(sheet, rows: list[list]) -> list[int]:
         source = row[SOURCE_FILE_INDEX]
         if source != current_file:
             current_file = source
-            banner = sheet.cell(row=row_number, column=1, value=source)
+            banner = sheet.cell(row=row_number, column=1, value=_fit(source))
             banner.font = Font(bold=True, color="FFFFFF")
             banner.alignment = _CENTRED
             banner.fill = _fill(_BANNER_FILL)

@@ -130,8 +130,11 @@ One conversion, start to finish:
    cookie. Failure re-renders the form with an error; no lockout, no logging.
 3. They select one or more KML/KMZ files and submit to `POST /convert`.
 4. The handler creates a per-request temporary directory.
-5. Each upload is written into it under `secure_filename(...)` only — the
-   client-supplied path is never used.
+5. Each upload is written under `safe_upload_name(...)` (which wraps
+   `secure_filename` with a suffix check and a length cap) into its own
+   numbered subdirectory of that temporary directory — the client-supplied
+   path is never used, and two uploads that sanitise to the same name cannot
+   collide.
 6. Each file goes through the existing `load_file`, which never raises and
    reports unreadable files as errors on the returned object.
 7. `export_to_stream` writes one workbook into a `BytesIO`, or writes nothing if
@@ -144,7 +147,12 @@ One conversion, start to finish:
    re-renders with the summary and no download.
 9. The temporary directory is removed as the request ends, whatever the outcome.
 
-Nothing is written outside that temporary directory at any point.
+Nothing is written outside that temporary directory at any point, by this
+code. That claim is about our own writes, not the WSGI layer underneath it:
+Werkzeug spools request bodies over 500 KB to a `SpooledTemporaryFile` in the
+system temp directory while parsing the upload, which is unlinked as soon as
+it is created, so nothing persists there either — but it is Werkzeug's
+behaviour, not this handler's.
 
 ## Error handling
 
@@ -197,7 +205,9 @@ Scaled to a trusted office LAN, not to the public internet.
   signs everyone out, which suits a service that retains nothing
 - Session cookie set `HttpOnly` and `SameSite=Lax`
 - `MAX_CONTENT_LENGTH` caps uploads at 50 MB by default
-- Uploads written under `secure_filename` inside a per-request temp directory
+- Uploads written under `safe_upload_name` (`secure_filename` plus a suffix
+  check and length cap), each into its own numbered subdirectory of a
+  per-request temp directory
 
 ### Accepted limitations
 

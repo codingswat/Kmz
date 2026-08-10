@@ -43,7 +43,8 @@ def _run_app(**kwargs) -> None:
 
 def main() -> int:
     password = os.environ.get("KMZ_PASSWORD") or getpass("Password for colleagues: ")
-    if not password.strip():
+    password = password.strip()
+    if not password:
         print("A password is required.")
         return 1
 

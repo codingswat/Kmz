@@ -1,10 +1,11 @@
 """KMZ archive tests."""
 
+import struct
 import zipfile
 
 import pytest
 
-from kmz_points.archive import ArchiveError, read_kml_bytes
+from kmz_points.archive import MAX_KML_BYTES, ArchiveError, read_kml_bytes
 
 MINIMAL_KML = b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document/></kml>'
 
@@ -13,6 +14,37 @@ def make_kmz(path, entries):
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in entries.items():
             archive.writestr(name, data)
+    return path
+
+
+def make_oversized_kmz(path, declared_size, name="doc.kml"):
+    """A small, genuinely tiny .kmz whose central directory and local file
+    header both *claim* one entry expands to ``declared_size`` bytes.
+
+    Building a real archive that big would make the test itself slow and
+    memory-hungry -- exactly what the size check exists to avoid. zipfile
+    always recomputes the true size when writing, so the declared size is
+    patched into the raw bytes afterwards, which is also a faithful stand-in
+    for what a real zip bomb looks like: a tiny file, a large lie in the
+    metadata.
+    """
+    import io
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, MINIMAL_KML)
+    raw = bytearray(buffer.getvalue())
+
+    local_offset = raw.find(b"PK\x03\x04")
+    central_offset = raw.find(b"PK\x01\x02")
+    assert local_offset != -1 and central_offset != -1
+
+    # Uncompressed size sits at byte 22 of a local file header and byte 24
+    # of a central directory header (each a 4-byte little-endian integer).
+    struct.pack_into("<I", raw, local_offset + 22, declared_size)
+    struct.pack_into("<I", raw, central_offset + 24, declared_size)
+
+    path.write_bytes(bytes(raw))
     return path
 
 
@@ -61,6 +93,18 @@ class TestKMZ:
         broken.write_bytes(b"this is not a zip file")
         with pytest.raises(ArchiveError):
             read_kml_bytes(broken)
+
+
+class TestDecompressionBomb:
+    def test_an_entry_declaring_more_than_the_limit_is_refused(self, tmp_path):
+        bomb = make_oversized_kmz(tmp_path / "bomb.kmz", MAX_KML_BYTES + 1)
+        with pytest.raises(ArchiveError, match="bomb.kmz"):
+            read_kml_bytes(bomb)
+
+    def test_a_normal_kmz_still_reads(self, tmp_path):
+        # The size check must not fire on ordinary, well within limit files.
+        kmz = make_kmz(tmp_path / "a.kmz", {"doc.kml": MINIMAL_KML})
+        assert read_kml_bytes(kmz) == MINIMAL_KML
 
 
 class TestUnknownInput:

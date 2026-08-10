@@ -14,6 +14,17 @@ class ArchiveError(Exception):
     """Raised when no KML content can be read from a path."""
 
 
+# Defends against a decompression ("zip") bomb: a small .kmz can declare an
+# entry that expands to hundreds of megabytes or more, and archive.read()
+# happily allocates and decompresses the full declared size before this
+# module gets a chance to say no. A 510 KB crafted .kmz was measured
+# expanding to 500 MB (+264 MB RSS) with no size check in place, and the
+# service's threaded=True lets several such requests run at once. No
+# legitimate KML document is anywhere near this large; 200 MB uncompressed
+# is a generous ceiling for even an elaborate one.
+MAX_KML_BYTES = 200 * 1024 * 1024
+
+
 def _kml_entry_names(archive: zipfile.ZipFile) -> list[str]:
     return [n for n in archive.namelist() if n.lower().endswith(".kml")]
 
@@ -29,6 +40,16 @@ def _read_from_kmz(path: Path) -> bytes:
                 (n for n in candidates if Path(n).name.lower() == "doc.kml"),
                 candidates[0],
             )
+            # Checked against the entry's declared size before decompressing
+            # it -- by the time archive.read() returns, the memory is already
+            # spent.
+            info = archive.getinfo(chosen)
+            if info.file_size > MAX_KML_BYTES:
+                raise ArchiveError(
+                    f"{path.name}: {chosen} would expand to "
+                    f"{info.file_size // (1024 * 1024)} MB, over the "
+                    f"{MAX_KML_BYTES // (1024 * 1024)} MB limit"
+                )
             return archive.read(chosen)
     except zipfile.BadZipFile as exc:
         raise ArchiveError(f"{path.name}: not a readable KMZ archive") from exc

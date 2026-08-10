@@ -5,7 +5,7 @@ re-ordering or adding a column is a change to this list and nothing else.
 
 Columns are grouped into bands. A band becomes a merged title across the top
 of its columns, optionally with a second merged caption beneath it, so the
-sheet reads as three labelled blocks rather than one undifferentiated row of
+sheet reads as four labelled blocks rather than one undifferentiated row of
 headers.
 """
 

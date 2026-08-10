@@ -192,6 +192,27 @@ class TestOversizedContent:
         assert cell.value.endswith("...")
 
 
+class TestFormulaInjection:
+    """A string cell beginning with =, +, - or @ is liable to be read as a
+    formula rather than text -- by openpyxl's own type inference for a
+    leading "=", and by Excel itself for the others. point.name and
+    point.description come straight from KML content, so this is not
+    hypothetical: an attacker who controls a placemark's name controls what
+    lands in the workbook."""
+
+    def test_a_name_starting_with_equals_lands_as_text_not_a_formula(self, tmp_path):
+        point = make_point(name='=HYPERLINK("http://evil.example","Click")+A1')
+        sheet = write_and_reopen(tmp_path, [point]).active
+        cell = first_data_row(sheet)[column_index("Name")]
+        assert cell.data_type != "f"
+        assert cell.value.startswith("'=")
+
+    def test_an_ordinary_name_is_unchanged(self, tmp_path):
+        sheet = write_and_reopen(tmp_path, [make_point(name="Alpha")]).active
+        cell = first_data_row(sheet)[column_index("Name")]
+        assert cell.value == "Alpha"
+
+
 class TestRows:
     def test_every_point_gets_a_row(self, tmp_path):
         book = write_and_reopen(tmp_path, [make_point(), make_point(), make_point()])

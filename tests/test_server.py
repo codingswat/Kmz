@@ -154,6 +154,16 @@ class TestPasswordGate:
     def test_a_non_ascii_attempt_against_an_ascii_password_is_refused(self, client):
         assert client.post("/login", data={"password": "wrøng"}).status_code == 401
 
+    def test_the_session_cookie_is_locked_down(self, client):
+        # Asserted against the real Set-Cookie header from a login through
+        # the test client, not app.config: the config keys could be deleted
+        # from create_app and this must still catch it, which a check on
+        # app.config["SESSION_COOKIE_HTTPONLY"] would not.
+        response = client.post("/login", data={"password": PASSWORD})
+        cookie = response.headers["Set-Cookie"]
+        assert "HttpOnly" in cookie
+        assert "SameSite=Lax" in cookie
+
     def test_the_page_sets_its_own_background_so_dark_mode_is_readable(self, client):
         # Without an explicit body background, the browser supplies its own
         # canvas. In dark mode that canvas is near-black, and the templates'
@@ -213,6 +223,11 @@ class TestConvert:
     def test_the_download_is_named_by_the_usual_pattern(self, signed_in, samples):
         response = signed_in.post("/convert", data=payload(samples))
         disposition = response.headers["Content-Disposition"]
+        # "attachment" is what makes the browser download the file rather
+        # than try to render it inline; "inline; filename=points_....xlsx"
+        # would satisfy a check on the filename alone, so that token is
+        # asserted explicitly rather than as a side effect of the name check.
+        assert disposition.startswith("attachment")
         assert "points_" in disposition and disposition.endswith(".xlsx")
 
     def test_a_broken_file_does_not_stop_the_good_ones(self, signed_in, samples, tmp_path):
@@ -272,6 +287,28 @@ class TestConvert:
             "/convert", data={"files": [(io.BytesIO(b"x" * 5000), "big.kml")]}
         )
         assert response.status_code == 413
+
+    def test_an_oversized_upload_gets_the_styled_page_not_werkzeugs_bare_one(
+        self, samples
+    ):
+        # Werkzeug's default 413 response names no limit and offers no way
+        # back to the form. The registered error handler should replace it
+        # with the normal upload page, still answering 413.
+        app = create_app(PASSWORD, max_upload_bytes=1000)
+        app.config["TESTING"] = True
+        small = app.test_client()
+        small.post("/login", data={"password": PASSWORD})
+        response = small.post(
+            "/convert", data={"files": [(io.BytesIO(b"x" * 5000), "big.kml")]}
+        )
+        body = response.get_data(as_text=True)
+        assert response.status_code == 413
+        assert "KML / KMZ Point Extractor" in body
+        assert "MB limit" in body
+
+    def test_the_upload_page_states_the_size_limit_up_front(self, signed_in):
+        body = signed_in.get("/").get_data(as_text=True)
+        assert "50 MB" in body
 
     def test_nothing_is_left_behind_on_disk(self, signed_in, samples, monkeypatch, tmp_path):
         # tempfile.tempdir is pinned to a directory only this test uses.
@@ -340,9 +377,10 @@ class TestConvert:
         # first upload was clobbered and the second double-counted: both
         # shapes have 2 data rows. Check the actual point names instead.
         # data_rows (not a raw min_row scan) is required here too: both
-        # uploads sanitise to the same stem, so their single point each still
-        # gets its own grey banner row naming "doc.kml" above it, and that
-        # banner would otherwise land in the same column as Name.
+        # uploads sanitise to the same stem, so _write_body sees the same
+        # source_file value twice in a row and groups them under a single
+        # shared grey banner naming "doc.kml" rather than one per point --
+        # and that banner would otherwise land in the same column as Name.
         name_column = column_index("Name")
         names = {row[name_column].value for row in data_rows(sheet)}
         assert names == {"Alpha", "Bravo"}

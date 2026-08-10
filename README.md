@@ -39,17 +39,47 @@ python -m kmz_points.cli file1.kml file2.kmz -o /path/to/output
 python -m kmz_points.cli --make-samples samples/     # generate demo inputs
 ```
 
+There is also a small LAN web service, for colleagues who would rather use a
+browser than install the app — see
+[BUILDING.md](BUILDING.md#running-the-service-for-colleagues) for how to
+start it.
+
 ## Output
 
-One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point:
+One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point,
+in 23 columns grouped into four labelled bands:
 
-| No. | Name | Description | Lat (DD) | Lon (DD) | Lat (DDM) | Lon (DDM) | Lat (DMS) | Lon (DMS) | UTM Zone | Easting (m) | Northing (m) | MGRS | Altitude (m) | Source File |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Band | Columns |
+|---|---|
+| separation (decimal degrees) | longitude, latitude, elevation |
+| Combined D,M,S | #, longitude, latitude |
+| separated D,M,S | lat, D, M, S, long, D, M, S |
+| details | Name, Description, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
 
-The header is bold and frozen, and column widths are fitted to content.
-`Lat (DD)`, `Lon (DD)`, `Easting (m)`, `Northing (m)` and `Altitude (m)` are
-stored as real numbers so they sort and work in formulas; the DDM, DMS, UTM
-Zone and MGRS columns are formatted text.
+The sheet has three header rows above the data: a merged title per band, a
+merged caption beneath it (only "separation" has one, captioned "decimal
+degrees" — every other band's title just claims both rows instead), then the
+column names on the third row. Data starts on row 4, and the sheet is frozen
+below all three header rows so they stay in view while scrolling. When a
+batch draws from more than one file, a grey banner spanning every column
+names each source file once, directly above its group of rows.
+
+The header rows are bold, and column widths are fitted to content.
+`longitude`, `latitude`, `elevation`, `#`, the numeric `lat`/`long` columns
+and their `D`/`M`/`S` breakdowns, `Easting (m)` and `Northing (m)` are stored
+as real numbers so they sort and work in formulas; the combined D,M,S text,
+`Name`, `Description`, the DDM columns, `UTM Zone`, `MGRS` and `Source File`
+are formatted text.
+
+#### D, M, S are magnitudes, not signed values
+
+The separated `D`, `M` and `S` columns hold whole degrees, whole minutes and
+seconds as positive magnitudes — the sign is deliberately not carried there.
+Whole degrees alone cannot express it for a value between -1 and 0: a
+latitude of `-0.180653` is south, but its whole-degree part is `0`, and `0`
+has no sign either way. Each D/M/S triple sits beside the signed decimal
+value it was split from — the `lat`/`long` column immediately to its
+left — and that repeated decimal is what actually carries the hemisphere.
 
 ### Coordinate formats
 
@@ -95,7 +125,7 @@ leaving the workbook somewhere you would not think to look.
 pytest
 ```
 
-156 tests. The GUI tests need a display and skip without one; on a headless
+249 tests. The GUI tests need a display and skip without one; on a headless
 machine run them under Xvfb:
 
 ```bash
@@ -114,6 +144,8 @@ xvfb-run -a pytest
 | `kmz_points/pipeline.py` | Orchestration and batch summary |
 | `kmz_points/cli.py` | Headless entry point |
 | `kmz_points/gui.py` | tkinter shell |
+| `kmz_points/server.py` | Flask LAN web service |
+| `serve.py` | Launches the web service, prints the URL to share |
 | `kmz_points/samples.py` | Demo input generation |
 
 The column layout is defined once, in `COLUMNS`. Adding or re-ordering a

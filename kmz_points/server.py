@@ -38,6 +38,11 @@ DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+def _format_mb(num_bytes: int) -> str:
+    """A human figure for an upload cap, e.g. ``50`` rather than ``50.0``."""
+    return f"{num_bytes / (1024 * 1024):g}"
+
+
 def safe_upload_name(raw: str, index: int) -> str | None:
     """A filename safe to write, keeping the suffix the pipeline checks.
 
@@ -87,6 +92,7 @@ _UPLOAD_PAGE = """<!doctype html>
 </style>
 <h1>KML / KMZ Point Extractor</h1>
 <p>Choose one or more .kml or .kmz files. You will get one Excel workbook back.</p>
+<p>Total upload size must be under {{ max_upload_mb }} MB.</p>
 <form method="post" action="{{ url_for('convert') }}" enctype="multipart/form-data">
   <input type="file" name="files" accept=".kml,.kmz" multiple required>
   <button type="submit">Convert</button>
@@ -115,6 +121,16 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
         SESSION_COOKIE_SAMESITE="Lax",
     )
 
+    max_upload_mb = _format_mb(max_upload_bytes)
+
+    def _upload_page(summary=None, warnings=()):
+        return render_template_string(
+            _UPLOAD_PAGE,
+            summary=summary,
+            warnings=list(warnings),
+            max_upload_mb=max_upload_mb,
+        )
+
     def signed_in() -> bool:
         return session.get("authenticated") is True
 
@@ -122,7 +138,7 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
     def index():
         if not signed_in():
             return render_template_string(_LOGIN_PAGE, error=None)
-        return render_template_string(_UPLOAD_PAGE, summary=None, warnings=[])
+        return _upload_page()
 
     expected = password.encode("utf-8")
 
@@ -145,11 +161,7 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
         uploads = [f for f in request.files.getlist("files") if f.filename]
         if not uploads:
             return (
-                render_template_string(
-                    _UPLOAD_PAGE,
-                    summary=None,
-                    warnings=["Choose at least one .kml or .kmz file."],
-                ),
+                _upload_page(warnings=["Choose at least one .kml or .kmz file."]),
                 400,
             )
 
@@ -189,9 +201,7 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
             summary = export_to_stream(loaded, buffer)
 
         if summary.points_extracted == 0:
-            return render_template_string(
-                _UPLOAD_PAGE, summary=summary.as_text(), warnings=summary.warnings
-            )
+            return _upload_page(summary=summary.as_text(), warnings=summary.warnings)
 
         buffer.seek(0)
         return send_file(
@@ -200,5 +210,17 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
             as_attachment=True,
             download_name=output_filename(),
         )
+
+    @app.errorhandler(413)
+    def too_large(_error):
+        # Werkzeug's bare "413 Request Entity Too Large" page names no limit
+        # and offers no way back. Render the same upload page instead, with
+        # a message that says why and how big is too big, while still
+        # answering 413 so a script or the test suite can tell what happened.
+        message = (
+            f"That upload is over the {max_upload_mb} MB limit. "
+            "Choose fewer or smaller files."
+        )
+        return _upload_page(warnings=[message]), 413
 
     return app
