@@ -59,14 +59,12 @@ jobs:
           - os: macos-latest
             label: macOS (Apple Silicon)
             artifact: KmzPoints-macos-arm64
-          # macos-13 was the old free Intel runner and has been removed from
-          # the hosted image list, so this job sat queued forever rather than
-          # failing -- and because the release job needs it, tagging a version
-          # would have hung instead of publishing. macos-15-intel is the
-          # current x86_64 label.
-          - os: macos-15-intel
-            label: macOS (Intel)
-            artifact: KmzPoints-macos-x86_64
+          # No Intel mac build. Intel machines cannot run the arm64 dmg, so
+          # this drops them as a supported target rather than merely trimming
+          # a job -- a deliberate call, made after v1.0.0, which does ship an
+          # Intel dmg. Anyone on an Intel mac can still build their own with
+          # the steps in BUILDING.md, or use the LAN service or the browser
+          # version, neither of which cares about the processor.
           - os: ubuntu-latest
             label: Linux (x64)
             artifact: KmzPoints-linux-x64
