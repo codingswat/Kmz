@@ -236,7 +236,9 @@ class TestExportToStream:
         buffer = io.BytesIO()
         export_to_stream(loaded, buffer)
         buffer.seek(0)
-        assert openpyxl.load_workbook(buffer).sheetnames == ["Points"]
+        # Not an exact sheet list: the samples contain a polygon, so an Areas
+        # sheet is expected. What must be absent is Issues.
+        assert "Issues" not in openpyxl.load_workbook(buffer).sheetnames
 
     def test_the_file_export_gains_no_issues_sheet(self, samples, tmp_path):
         # The desktop app's output must not change shape.
@@ -245,4 +247,5 @@ class TestExportToStream:
         loaded = [load_file(p) for p in list(samples) + [broken]]
 
         summary = export_to_excel(loaded, tmp_path)
-        assert openpyxl.load_workbook(summary.output_path).sheetnames == ["Points"]
+        sheets = openpyxl.load_workbook(summary.output_path).sheetnames
+        assert "Issues" not in sheets

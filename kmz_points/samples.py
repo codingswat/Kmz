@@ -64,9 +64,22 @@ NESTED_KML = """<?xml version="1.0" encoding="UTF-8"?>
       </Placemark>
       <Placemark>
         <name>An area</name>
-        <Polygon><outerBoundaryIs><LinearRing>
-          <coordinates>1,2 3,4 5,6 1,2</coordinates>
-        </LinearRing></outerBoundaryIs></Polygon>
+        <description>A square kilometre with a courtyard cut out of it</description>
+        <Polygon>
+          <outerBoundaryIs><LinearRing>
+            <coordinates>
+              38.200000,34.600000 38.210900,34.600000
+              38.210900,34.609000 38.200000,34.609000
+              38.200000,34.600000
+            </coordinates>
+          </LinearRing></outerBoundaryIs>
+          <innerBoundaryIs><LinearRing>
+            <coordinates>
+              38.203000,34.602000 38.205000,34.602000
+              38.205000,34.604000 38.203000,34.604000
+            </coordinates>
+          </LinearRing></innerBoundaryIs>
+        </Polygon>
       </Placemark>
     </Folder>
   </Document>

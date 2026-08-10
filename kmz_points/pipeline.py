@@ -15,6 +15,7 @@ from typing import BinaryIO
 
 from kmz_points.archive import ArchiveError, read_kml_bytes
 from kmz_points.excel import output_filename, write_workbook
+from kmz_points.geometry import MeasuredArea, measure
 from kmz_points.kml_parser import parse_document
 from kmz_points.models import Area, BatchSummary, Point
 from kmz_points.table import build_table_rows
@@ -90,27 +91,40 @@ def load_file(path: str | Path) -> LoadedFile:
     )
 
 
-def _collect(loaded: list[LoadedFile]) -> tuple[list[Point], BatchSummary]:
-    """Reduce a batch to its points and its summary.
+def _collect(
+    loaded: list[LoadedFile],
+) -> tuple[list[Point], list[MeasuredArea], BatchSummary]:
+    """Reduce a batch to its points, its measured areas and its summary.
 
     Shared by both exports so the two paths cannot report a batch
-    differently.
+    differently. Areas are measured here rather than in the writer, so the
+    spreadsheet layer never imports the geometry maths.
     """
     summary = BatchSummary()
     points: list[Point] = []
+    areas: list[MeasuredArea] = []
 
     for item in loaded:
         if item.ok:
             summary.files_read += 1
             summary.features_skipped += item.skipped
             points.extend(item.points)
+            areas.extend(measure(area) for area in item.areas)
         else:
             summary.files_failed += 1
             summary.warnings.append(item.error or f"{item.name}: failed")
         summary.warnings.extend(item.warnings)
 
     summary.points_extracted = len(points)
-    return points, summary
+    summary.areas_extracted = len(areas)
+    for measured in areas:
+        if measured.measurement.square_metres is None:
+            summary.warnings.append(
+                f"{measured.area.source_file}: area "
+                f"{measured.area.name or '<unnamed>'} not measured "
+                f"({measured.measurement.problem})"
+            )
+    return points, areas, summary
 
 
 def export_to_excel(
@@ -119,14 +133,14 @@ def export_to_excel(
     when: datetime | None = None,
 ) -> BatchSummary:
     """Write every loaded point into one workbook and summarise the batch."""
-    points, summary = _collect(loaded)
+    points, areas, summary = _collect(loaded)
 
-    if not points:
+    if not points and not areas:
         summary.warnings.append("No points found; nothing was written.")
         return summary
 
     destination = Path(output_dir) / output_filename(when)
-    write_workbook(build_table_rows(points), destination)
+    write_workbook(build_table_rows(points), destination, areas=areas)
     summary.output_path = str(destination)
     return summary
 
@@ -141,13 +155,15 @@ def export_to_stream(loaded: list[LoadedFile], stream: BinaryIO) -> BatchSummary
     path: the response body is the file, so there is nowhere else to tell
     someone that two of their five files were unreadable.
     """
-    points, summary = _collect(loaded)
+    points, areas, summary = _collect(loaded)
 
-    if not points:
+    if not points and not areas:
         summary.warnings.append("No points found; nothing was written.")
         return summary
 
-    write_workbook(build_table_rows(points), stream, issues=summary.warnings)
+    write_workbook(
+        build_table_rows(points), stream, issues=summary.warnings, areas=areas
+    )
     return summary
 
 

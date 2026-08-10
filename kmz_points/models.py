@@ -38,7 +38,20 @@ class Area:
 
     @property
     def corner_count(self) -> int:
-        return len(self.outer)
+        """Corners a reader would count.
+
+        KML writes rings closed, repeating the first coordinate last, so the
+        raw list has one more entry than the shape has corners -- a square
+        would otherwise be reported as having five.
+        """
+        ring = self.outer
+        if (
+            len(ring) > 1
+            and ring[0].lat == ring[-1].lat
+            and ring[0].lon == ring[-1].lon
+        ):
+            return len(ring) - 1
+        return len(ring)
 
 
 @dataclass
@@ -58,6 +71,7 @@ class BatchSummary:
     files_read: int = 0
     files_failed: int = 0
     points_extracted: int = 0
+    areas_extracted: int = 0
     features_skipped: int = 0
     warnings: list[str] = field(default_factory=list)
     output_path: str | None = None
@@ -66,6 +80,7 @@ class BatchSummary:
         lines = [
             f"{self.files_read} file(s) read",
             f"{self.points_extracted} point(s) extracted",
+            f"{self.areas_extracted} area(s) extracted",
             f"{self.features_skipped} non-point feature(s) skipped",
         ]
         if self.files_failed:

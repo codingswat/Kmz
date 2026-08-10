@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import utm as _utm
 
-from kmz_points.models import Point
+from kmz_points.models import Area, Point
 
 # UTM is undefined outside this band; the poles use UPS instead.
 _UTM_MIN_LAT = -80.0
@@ -152,3 +152,20 @@ def polygon_area(outer: list[Point], holes: list[list[Point]]) -> Measurement:
         )
 
     return Measurement(total)
+
+
+@dataclass(frozen=True)
+class MeasuredArea:
+    """An area paired with its size, ready to be written out.
+
+    Pairing them here keeps the spreadsheet writer from importing the
+    measurement maths, and keeps the pipeline from formatting banner text.
+    """
+
+    area: Area
+    measurement: Measurement
+
+
+def measure(area: Area) -> MeasuredArea:
+    """Measure one area, holes included."""
+    return MeasuredArea(area, polygon_area(area.outer, area.holes))

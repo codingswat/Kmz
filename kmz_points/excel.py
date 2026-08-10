@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 
 from kmz_points.table import (
     COLUMNS,
+    build_table_rows,
     NUMBER_INDEX,
     SOURCE_FILE_INDEX,
     bands,
@@ -34,6 +35,10 @@ HEADER_ROW = 3
 FIRST_DATA_ROW = 4
 
 _BANNER_FILL = "A6A6A6"
+# Holes sit inside an area, so their banner is lighter than the area's own --
+# the indentation of colour rather than of whitespace, which a merged row
+# cannot show.
+_HOLE_BANNER_FILL = "D9D9D9"
 _CENTRED = Alignment(horizontal="center", vertical="center")
 
 
@@ -136,6 +141,36 @@ def _write_header(sheet) -> None:
             cell.font = Font(bold=True, color=column.font_colour)
 
 
+def _banner(sheet, row_number: int, text: str, colour: str) -> None:
+    """A merged, filled row spanning the whole table."""
+    cell = sheet.cell(row=row_number, column=1, value=_fit(text))
+    cell.font = Font(bold=True, color="FFFFFF" if colour == _BANNER_FILL else "1F2933")
+    cell.alignment = _CENTRED
+    cell.fill = _fill(colour)
+    sheet.merge_cells(
+        start_row=row_number,
+        start_column=1,
+        end_row=row_number,
+        end_column=len(COLUMNS),
+    )
+
+
+def _area_banner_text(measured) -> str:
+    """What an area's banner says: its size, or why there isn't one."""
+    area = measured.area
+    name = area.name or "<unnamed>"
+    corners = f"{area.corner_count} corners"
+    size = measured.measurement
+
+    if size.square_metres is None:
+        return f"{name} — area not measured: {size.problem} · {corners}"
+
+    return (
+        f"{name} — {size.square_metres:,.0f} m² · "
+        f"{size.hectares:,.3f} ha · {size.square_kilometres:,.6f} km² · {corners}"
+    )
+
+
 def _write_body(sheet, rows: list[list]) -> list[int]:
     """Write the rows, banner-separated by source file.
 
@@ -171,10 +206,63 @@ def _write_body(sheet, rows: list[list]) -> list[int]:
     return data_rows
 
 
+def _apply_formats(sheet, data_row_numbers: list[int], rows: list[list]) -> None:
+    """Number formats on data rows only, and a width per column."""
+    for index, column in enumerate(COLUMNS, start=1):
+        letter = get_column_letter(index)
+        if column.number_format:
+            for row_number in data_row_numbers:
+                sheet.cell(row=row_number, column=index).number_format = (
+                    column.number_format
+                )
+        sheet.column_dimensions[letter].width = _column_width(
+            column.header, [row[index - 1] for row in rows]
+        )
+
+
+def _write_areas(book, measured_areas: list) -> None:
+    """The Areas sheet: a banner per area, its corners, then each hole.
+
+    Corner rows are ordinary point rows, so they carry every conversion the
+    Points sheet does. Numbering restarts within each ring, which is what makes
+    a corner list readable.
+    """
+    sheet = book.create_sheet("Areas")
+    _write_header(sheet)
+
+    data_row_numbers: list[int] = []
+    all_rows: list[list] = []
+    row_number = FIRST_DATA_ROW
+
+    for measured in measured_areas:
+        _banner(sheet, row_number, _area_banner_text(measured), _BANNER_FILL)
+        row_number += 1
+
+        rings = [(None, measured.area.outer)]
+        for position, hole in enumerate(measured.area.holes, start=1):
+            rings.append((f"hole {position} — {len(hole)} corners", hole))
+
+        for label, corners in rings:
+            if label is not None:
+                _banner(sheet, row_number, label, _HOLE_BANNER_FILL)
+                row_number += 1
+
+            for row in build_table_rows(corners):
+                all_rows.append(row)
+                for index, value in enumerate(row, start=1):
+                    sheet.cell(row=row_number, column=index, value=_fit(value))
+                data_row_numbers.append(row_number)
+                row_number += 1
+
+    sheet.freeze_panes = f"A{FIRST_DATA_ROW}"
+    _apply_formats(sheet, data_row_numbers, all_rows)
+
+
 def write_workbook(
     rows: list[list],
     target: str | Path | BinaryIO,
     issues: list[str] | None = None,
+    areas: list | None = None,
 ) -> Path | None:
     """Write rows to an xlsx file, or into an open binary stream.
 
@@ -190,19 +278,13 @@ def write_workbook(
     sheet.title = "Points"
 
     _write_header(sheet)
-    data_rows = _write_body(sheet, rows)
+    written = _write_body(sheet, rows)
     sheet.freeze_panes = f"A{FIRST_DATA_ROW}"
+    _apply_formats(sheet, written, rows)
 
-    for index, column in enumerate(COLUMNS, start=1):
-        letter = get_column_letter(index)
-        if column.number_format:
-            for row_number in data_rows:
-                sheet.cell(row=row_number, column=index).number_format = (
-                    column.number_format
-                )
-        sheet.column_dimensions[letter].width = _column_width(
-            column.header, [row[index - 1] for row in rows]
-        )
+    if areas:
+        # Between Points and Issues: the data first, the complaints last.
+        _write_areas(book, areas)
 
     if issues:
         # Appended after Points, so opening the file lands on the data.
