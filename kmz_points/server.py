@@ -62,7 +62,7 @@ _LOGIN_PAGE = """<!doctype html>
 <title>KML / KMZ Point Extractor</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto;
-         padding: 0 1rem; color: #1f2933; }
+         padding: 0 1rem; color: #1f2933; background: #f2f4f7; }
   .error { color: #b42318; }
   input, button { font: inherit; padding: .5rem; }
 </style>
@@ -79,7 +79,7 @@ _UPLOAD_PAGE = """<!doctype html>
 <title>KML / KMZ Point Extractor</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto;
-         padding: 0 1rem; color: #1f2933; }
+         padding: 0 1rem; color: #1f2933; background: #f2f4f7; }
   .summary { background: #f2f4f7; padding: 1rem; border-radius: .4rem;
              white-space: pre-line; }
   .warning { color: #b54708; }

@@ -5,6 +5,7 @@ unchanged on every CI platform.
 """
 
 import io
+import re
 import tempfile
 from pathlib import Path
 
@@ -44,6 +45,19 @@ def payload(paths):
 
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _body_rule(html):
+    """The CSS text of the `body { ... }` rule only.
+
+    A plain `"background" in html` substring check would pass for any page
+    that declares a background anywhere at all, on any element. Scoping the
+    search to the body rule specifically means the test fails if that
+    declaration is removed, not just if the stylesheet vanishes entirely.
+    """
+    match = re.search(r"body\s*\{([^}]*)\}", html)
+    assert match, "no body rule found in the page's stylesheet"
+    return match.group(1)
 
 
 class TestSafeUploadName:
@@ -122,6 +136,19 @@ class TestPasswordGate:
 
     def test_a_non_ascii_attempt_against_an_ascii_password_is_refused(self, client):
         assert client.post("/login", data={"password": "wrøng"}).status_code == 401
+
+    def test_the_page_sets_its_own_background_so_dark_mode_is_readable(self, client):
+        # Without an explicit body background, the browser supplies its own
+        # canvas. In dark mode that canvas is near-black, and the templates'
+        # explicit dark ink (#1f2933) renders as dark grey on near-black:
+        # barely readable. Checked against a running server in a real
+        # browser, not just this test client, which never renders anything.
+        login_page = client.get("/").get_data(as_text=True)
+        assert "background" in _body_rule(login_page)
+
+        client.post("/login", data={"password": PASSWORD})
+        upload_page = client.get("/").get_data(as_text=True)
+        assert "background" in _body_rule(upload_page)
 
 
 class TestConvert:
