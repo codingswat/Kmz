@@ -61,9 +61,38 @@ def data_rows(sheet) -> list[tuple]:
 
 
 def output_filename(when: datetime | None = None) -> str:
-    """``points_YYYYMMDD_HHMM.xlsx`` for the given moment (default: now)."""
+    """``points_YYYYMMDD_HHMMSS.xlsx`` for the given moment (default: now).
+
+    Seconds are included because minutes are not enough: two exports in the
+    same minute produced the same name, and on the desktop the second silently
+    overwrote the first while both reported success.
+    """
     when = when or datetime.now()
-    return f"points_{when:%Y%m%d_%H%M}.xlsx"
+    return f"points_{when:%Y%m%d_%H%M%S}.xlsx"
+
+
+def unique_path(directory: str | Path, filename: str) -> Path:
+    """A path in ``directory`` that does not already exist.
+
+    Seconds make a collision unlikely, not impossible -- two exports can still
+    land in the same second, and a clock can go backwards. Overwriting someone's
+    workbook is bad enough to be worth ruling out rather than making improbable,
+    so a name already taken gains a counter: ``points_….xlsx``,
+    ``points_…-2.xlsx``, and so on.
+    """
+    directory = Path(directory)
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    attempt = 2
+    while True:
+        candidate = directory / f"{stem}-{attempt}{suffix}"
+        if not candidate.exists():
+            return candidate
+        attempt += 1
 
 
 # Only "=" needs defusing in an xlsx. openpyxl infers a type from the string

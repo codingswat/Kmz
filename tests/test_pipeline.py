@@ -249,3 +249,51 @@ class TestExportToStream:
         summary = export_to_excel(loaded, tmp_path)
         sheets = openpyxl.load_workbook(summary.output_path).sheetnames
         assert "Issues" not in sheets
+
+
+class TestRepeatedExportsDoNotOverwrite:
+    """A second export in the same second used to replace the first one's
+    workbook on disk while both runs reported success against the same path,
+    so the earlier batch was lost with nothing to indicate it."""
+
+    def test_two_exports_in_the_same_second_produce_two_files(
+        self, samples, tmp_path
+    ):
+        from datetime import datetime
+
+        out = tmp_path / "out"
+        out.mkdir()
+        when = datetime(2026, 8, 10, 14, 30, 15)
+
+        first = export_to_excel([load_file(p) for p in samples], out, when)
+        second = export_to_excel([load_file(samples[0])], out, when)
+
+        assert first.output_path != second.output_path
+        assert len(list(out.glob("points_*.xlsx"))) == 2
+
+    def test_the_earlier_workbook_still_holds_its_own_points(
+        self, samples, tmp_path
+    ):
+        from datetime import datetime
+
+        out = tmp_path / "out"
+        out.mkdir()
+        when = datetime(2026, 8, 10, 14, 30, 15)
+
+        first = export_to_excel([load_file(p) for p in samples], out, when)
+        export_to_excel([load_file(samples[0])], out, when)
+
+        book = openpyxl.load_workbook(first.output_path)
+        assert len(data_rows(book.active)) == SAMPLE_POINT_TOTAL
+
+    def test_the_second_file_is_named_by_a_counter(self, samples, tmp_path):
+        from datetime import datetime
+
+        out = tmp_path / "out"
+        out.mkdir()
+        when = datetime(2026, 8, 10, 14, 30, 15)
+
+        export_to_excel([load_file(p) for p in samples], out, when)
+        second = export_to_excel([load_file(samples[0])], out, when)
+
+        assert Path(second.output_path).name.endswith("-2.xlsx")

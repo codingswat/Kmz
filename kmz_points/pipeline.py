@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from kmz_points.archive import ArchiveError, read_kml_bytes
-from kmz_points.excel import output_filename, write_workbook
+from kmz_points.excel import output_filename, unique_path, write_workbook
 from kmz_points.geometry import MeasuredArea, measure
 from kmz_points.kml_parser import parse_document
 from kmz_points.models import Area, BatchSummary, Point
@@ -139,7 +139,9 @@ def export_to_excel(
         summary.warnings.append("No points found; nothing was written.")
         return summary
 
-    destination = Path(output_dir) / output_filename(when)
+    # Never clobbers: a second export in the same second gets a counter
+    # rather than silently replacing the first one's workbook.
+    destination = unique_path(output_dir, output_filename(when))
     write_workbook(build_table_rows(points), destination, areas=areas)
     summary.output_path = str(destination)
     return summary

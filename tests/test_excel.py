@@ -16,6 +16,7 @@ from kmz_points.excel import (
     HEADER_ROW,
     data_rows,
     output_filename,
+    unique_path,
     write_workbook,
 )
 from kmz_points.models import Point
@@ -63,11 +64,11 @@ def first_data_row(sheet):
 class TestOutputFilename:
     def test_uses_the_specified_pattern(self):
         stamp = datetime(2026, 8, 6, 14, 35)
-        assert output_filename(stamp) == "points_20260806_1435.xlsx"
+        assert output_filename(stamp) == "points_20260806_143500.xlsx"
 
     def test_pads_single_digit_components(self):
         stamp = datetime(2026, 1, 2, 3, 4)
-        assert output_filename(stamp) == "points_20260102_0304.xlsx"
+        assert output_filename(stamp) == "points_20260102_030400.xlsx"
 
 
 class TestHeaderRows:
@@ -338,3 +339,26 @@ class TestIssuesSheet:
         target = tmp_path / "out.xlsx"
         write_workbook(build_table_rows([make_point()]), target, issues=[])
         assert load_workbook(target).sheetnames == ["Points"]
+
+
+class TestUniquePath:
+    """Two exports in the same second must not silently replace each other.
+    Before this, a same-minute export destroyed the earlier workbook and both
+    runs reported success against the same path."""
+
+    def test_a_free_name_is_used_as_is(self, tmp_path):
+        assert unique_path(tmp_path, "points.xlsx") == tmp_path / "points.xlsx"
+
+    def test_a_taken_name_gains_a_counter(self, tmp_path):
+        (tmp_path / "points.xlsx").write_text("taken")
+        assert unique_path(tmp_path, "points.xlsx") == tmp_path / "points-2.xlsx"
+
+    def test_the_counter_keeps_climbing(self, tmp_path):
+        (tmp_path / "points.xlsx").write_text("x")
+        (tmp_path / "points-2.xlsx").write_text("x")
+        (tmp_path / "points-3.xlsx").write_text("x")
+        assert unique_path(tmp_path, "points.xlsx") == tmp_path / "points-4.xlsx"
+
+    def test_the_extension_survives(self, tmp_path):
+        (tmp_path / "points.xlsx").write_text("x")
+        assert unique_path(tmp_path, "points.xlsx").suffix == ".xlsx"
