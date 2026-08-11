@@ -35,9 +35,21 @@ export function latitudeBand(lat) {
   return letters[Math.floor((lat + 80) / 8)];
 }
 
-/** An angle in radians folded into [-pi, pi). Mirrors Python's utm.mod_angle. */
+/**
+ * An angle in radians folded into [-pi, pi). Mirrors Python's utm.mod_angle.
+ *
+ * The sign correction is the whole of it. Python's `%` takes the sign of its
+ * RIGHT operand and JavaScript's takes the sign of its LEFT, so the same
+ * expression in both languages folds +357 degrees to -3 and leaves -357
+ * exactly where it was. Written as CPython writes it -- remainder first, one
+ * turn added only when the sign came out wrong -- so that every angle already
+ * in range comes back bit for bit unchanged, which `(x + turn) % turn` would
+ * not manage for a small one.
+ */
 function modAngle(value) {
-  return ((value + Math.PI) % (2 * Math.PI)) - Math.PI;
+  const turn = 2 * Math.PI;
+  const shifted = (value + Math.PI) % turn;
+  return (shifted < 0 ? shifted + turn : shifted) - Math.PI;
 }
 
 function zoneNumber(lat, lon) {

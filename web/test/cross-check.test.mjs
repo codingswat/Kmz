@@ -86,18 +86,14 @@ test("area measurement agrees with Python on every shape", () => {
 });
 
 /**
- * Three places the browser's coordinates are known NOT to match Python's.
+ * The two coordinates the browser used to get wrong, asserted positively.
  *
- * These are defects, not decisions, and none of them is fixed here: they live
- * in src/convert.js, they change numbers a workbook shows, and that is a
- * change to make deliberately with its own sweep behind it rather than as a
- * side effect of adding tests. They are written down instead, so that they
- * are a known quantity rather than a surprise, so that they cannot quietly
- * get worse, and so that whoever fixes one is told to delete the pin.
- *
- * The 410 coordinates above miss all three because every one of them is a
- * boundary: latitude exactly 84, longitude exactly 180, and latitude past the
- * band UTM covers at all.
+ * Both were pinned here as known defects for as long as they stood, because
+ * they change numbers a workbook shows and that is a change to make
+ * deliberately. They are fixed now, and the coordinate cases above carry
+ * latitude 84 and longitude 180 as a matter of course, so the sweep covers
+ * them too -- these assertions stay because a sweep says which coordinate
+ * disagreed and this says what was meant to happen there.
  */
 test("the boundary coordinates agree with Python", () => {
   // Both of these were gaps until the sweep above was widened enough to name
@@ -118,6 +114,38 @@ test("the boundary coordinates agree with Python", () => {
   assert.equal(toUtm(0, -180).zone, 1);
   assert.equal(Math.round(toUtm(0, 180).easting), 166021);
   assert.equal(Math.round(toUtm(0, 180).northing), 0);
+});
+
+/**
+ * The angle from a central meridian, when the zone is across the antimeridian.
+ *
+ * geometry.js projects every corner of a shape in the single zone of that
+ * shape's centre, so toUtm's `forceZone` is a parity surface in its own right
+ * and not an internal convenience. It is also the only place the angle can
+ * exceed half a turn: a point at -180 forced into zone 60 sits 357 degrees
+ * from that zone's central meridian, and the utm package folds it to 3 before
+ * projecting. The fixture sweep cannot reach this -- Python's to_utm never
+ * forces a zone -- so the reference values are taken by hand:
+ *
+ *     .venv/bin/python -c "import utm; print(utm.from_latlon(0.0, -180.0, force_zone_number=60))"
+ */
+test("a forced zone across the antimeridian agrees with Python", () => {
+  // Both directions, because only one of them can be got wrong. JavaScript's
+  // `%` keeps the sign of its LEFT operand where Python's takes the sign of
+  // its right, so a fold written as `(x + pi) % (2pi) - pi` folds +357 degrees
+  // to -3 correctly and leaves -357 exactly where it was.
+  const eastward = toUtm(0, 180, 1);
+  assert.equal(Math.round(eastward.easting), 166021);
+  assert.equal(Math.round(eastward.northing), 0);
+
+  const westward = toUtm(0, -180, 60);
+  assert.equal(Math.round(westward.easting), 833979);
+  assert.equal(Math.round(westward.northing), 0);
+
+  // And once below the equator, where the false northing is added on top.
+  const southward = toUtm(-33, -180, 60);
+  assert.equal(Math.round(southward.easting), 780300);
+  assert.equal(Math.round(southward.northing), 6344714);
 });
 
 /**
