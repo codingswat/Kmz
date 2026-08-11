@@ -33,7 +33,11 @@ const fixtures = JSON.parse(readFileSync(join(here, "fixtures.json"), "utf8"));
 function bannerFor(item) {
   return areaBannerText({
     area: { name: item.name, outer: item.outer, holes: item.holes || [] },
-    measurement: measurement(item.squareMetres, item.problem ?? null),
+    measurement: measurement(
+      item.squareMetres,
+      item.problem ?? null,
+      item.perimeterMetres ?? null,
+    ),
   });
 }
 
@@ -118,7 +122,7 @@ test("the adversarial banners really are adversarial", () => {
     const size = item.squareMetres;
     return (
       `${item.name} — ${old(size, 0)} m² · ${old(size / 1e4, 3)} ha · ` +
-      `${old(size / 1e6, 6)} km² · 4 corners`
+      `${old(size / 1e6, 6)} km² · ${old(item.perimeterMetres, 0)} m perimeter · 4 corners`
     );
   };
 

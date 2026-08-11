@@ -68,6 +68,10 @@ test("area measurement agrees with Python on every shape", () => {
 
     if (item.squareMetres === null) {
       assert.equal(result.squareMetres, null, `${item.name} should not be measurable`);
+      // A refused shape has no perimeter either. Reporting one would say the
+      // outline is trustworthy when the reason it was refused is that it is
+      // not.
+      assert.equal(result.perimeterMetres, null, `${item.name} should have no perimeter`);
       // The whole reason, not its first thirty characters. Comparing a prefix
       // hid a live divergence for as long as it existed: Python interpolated
       // the caught exception's text and the browser did not, and every one of
@@ -77,12 +81,48 @@ test("area measurement agrees with Python on every shape", () => {
     }
 
     assert.ok(result.squareMetres !== null, `${item.name} should be measurable`);
-    // A relative tolerance, not equality: float64 summation order differs
-    // between the two languages, which showed up as ~1e-9 and is not a
-    // disagreement about the answer.
+    // A relative tolerance, not equality: the two languages' libm differ in
+    // the last bit of a sin or an atan2, which showed up as ~1e-16 and is not
+    // a disagreement about the answer. The formula either side of those calls
+    // is the same one, so this is noise rather than a tolerance being spent.
     const relative = Math.abs(result.squareMetres - item.squareMetres) / item.squareMetres;
     assert.ok(relative < 1e-6, `${item.name}: ${result.squareMetres} vs ${item.squareMetres}`);
+
+    const perimeterOff =
+      Math.abs(result.perimeterMetres - item.perimeterMetres) / item.perimeterMetres;
+    assert.ok(
+      perimeterOff < 1e-6,
+      `${item.name}: perimeter ${result.perimeterMetres} vs ${item.perimeterMetres}`,
+    );
   }
+});
+
+/**
+ * The measurement is on the ellipsoid, and the fixture has to prove it.
+ *
+ * A sweep over 150 shapes passes just as happily on two implementations that
+ * are wrong in the same way, so these are the shapes the sweep would not tell
+ * you about by name: the two the projection used to refuse outright, and the
+ * one whose corners sit either side of the antimeridian.
+ */
+test("the shapes the projection could not measure are measured now", () => {
+  const named = (name) => fixtures.areas.find((item) => item.name === name);
+
+  for (const name of ["polar", "close to the pole", "spans 6.25 degrees"]) {
+    const item = named(name);
+    assert.ok(item, `the fixture lost "${name}"`);
+    assert.ok(item.squareMetres > 0, `${name} should now measure`);
+    assert.equal(polygonArea(item.outer, item.holes).problem, null);
+  }
+
+  // Straddling 180 degrees, where a bounding box in raw longitude would read
+  // 359.98 degrees wide and every step but one would be measured the long way
+  // round the world.
+  const across = named("across the antimeridian");
+  const here = polygonArea(across.outer, across.holes);
+  assert.ok(here.squareMetres > 0);
+  // 0.02 by 0.01 degrees at 10 degrees north, which is about 2.4 km².
+  assert.ok(here.squareMetres > 2.4e6 && here.squareMetres < 2.45e6, `${here.squareMetres}`);
 });
 
 /**
@@ -119,13 +159,15 @@ test("the boundary coordinates agree with Python", () => {
 /**
  * The angle from a central meridian, when the zone is across the antimeridian.
  *
- * geometry.js projects every corner of a shape in the single zone of that
- * shape's centre, so toUtm's `forceZone` is a parity surface in its own right
- * and not an internal convenience. It is also the only place the angle can
- * exceed half a turn: a point at -180 forced into zone 60 sits 357 degrees
- * from that zone's central meridian, and the utm package folds it to 3 before
- * projecting. The fixture sweep cannot reach this -- Python's to_utm never
- * forces a zone -- so the reference values are taken by hand:
+ * `forceZone` has no caller left: geometry.js used it to project every corner
+ * of a shape into the single zone of that shape's centre, and geometry.js no
+ * longer projects anything. What it still covers is the only place the angle
+ * from a central meridian can exceed half a turn -- a point at -180 forced
+ * into zone 60 sits 357 degrees from that zone's meridian, and the utm package
+ * folds it to 3 before projecting -- so the parameter and this test are kept
+ * against the day something forces a zone again. The fixture sweep cannot
+ * reach it, since Python's to_utm never forces one, so the reference values
+ * are taken by hand:
  *
  *     .venv/bin/python -c "import utm; print(utm.from_latlon(0.0, -180.0, force_zone_number=60))"
  */

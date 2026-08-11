@@ -143,15 +143,30 @@ Yes, checked at every level rather than assumed:
 | Check | Result |
 |---|---|
 | UTM, UPS and MGRS, 485 coordinates | 0 mismatches, exact to the metre |
-| Area measurement, 136 shapes | 0 mismatches (worst 0.0007 m², float noise) |
+| Area measurement, 155 shapes | 0 mismatches (worst 1.0e-11 relative) |
+| Perimeter, 138 measurable shapes | 0 mismatches (worst 1.8e-12 relative) |
+| The extent ceiling and the corner ceiling | the same two numbers, asserted directly |
 | Refusal wording, all 6 reasons | identical, and each one reached by a shape |
 | The 24 columns | header, kind, number format and band all identical |
 | Table rows, 85 points | every cell identical |
-| Area banner text, 136 + 23 areas | identical, including the numbers |
+| Area banner text, 155 + 23 areas | identical, including the numbers |
 | KMZ extraction | byte-identical to Python's `zipfile` |
 | KML parsing, real samples | points, areas, descriptions, ExtendedData and skipped counts all match |
 | ExtendedData, 23 documents | the same Attributes cell, escaping included |
 | **The finished workbook** | **423 cells, 0 mismatches** — value, type and number format, plus sheets, merges, widths and freeze panes |
+
+The area row is worth reading twice. The two implementations do not agree
+because one was checked against the other — they run the **same** formula,
+written out in both languages, so the only thing left to differ is the last
+bit of a `sin` or an `atan2`. The worst case is the shape at 85°N, where a
+polygon a kilometre across is 3e-9 of a radian of spherical excess and those
+last bits are all that is left; 1e-11 there is still five orders below the
+tolerance the cross-check allows.
+
+That is also why `geographiclib` was not adopted. Python could import it
+cheaply, and matching it in the browser would have meant vendoring roughly 780
+lines of third-party numerics into `src/`, 30 KB on the committed single file,
+and a parity that has to be verified rather than one that is free.
 
 The last row is the one that matters: the same three sample files through both
 implementations produce workbooks a reader could not tell apart. Not the same
@@ -169,7 +184,7 @@ alignment are deliberately outside that; see `kmz_points/workbook_facts.py`.
 | `src/kml.js` | Point and polygon extraction (needs a DOM) |
 | `src/archive.js` | KMZ → KML bytes |
 | `src/unzip.js` | ZIP reader, with the decompression-bomb cap |
-| `src/geometry.js` | Area measurement |
+| `src/geometry.js` | Area and perimeter on the ellipsoid, and the refusals |
 | `src/convert.js` | Coordinate conversions, including UTM and MGRS |
 | `src/table.js` | The 24 columns and five bands |
 | `src/workbook.js` | The banded layout, banners and sheets |

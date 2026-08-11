@@ -12,6 +12,7 @@ test rather than as a stale file nobody noticed.
 """
 
 import json
+import math
 import random
 import sys
 import tempfile
@@ -29,6 +30,8 @@ from kmz_points.convert import (  # noqa: E402
 )
 from kmz_points.excel import area_banner_text  # noqa: E402
 from kmz_points.geometry import (  # noqa: E402
+    CROSSING_CHECK_CORNER_LIMIT,
+    MAX_EXTENT_DEGREES,
     REFUSALS,
     MeasuredArea,
     Measurement,
@@ -274,6 +277,27 @@ def area_cases():
             corner(lat + size, lon),
         ]
 
+    def wheel(count, lat, lon, radius, swap=None):
+        """A `count`-corner ring on a circle, optionally tangled by one swap.
+
+        Rounded to seven decimals so a 512-corner ring stays a readable size
+        in the fixture; that is about a centimetre, far finer than anything
+        measured here. Swapping two corners crosses the two edges that used to
+        end at them, which is how a ring at the corner ceiling gets an
+        intersection to find.
+        """
+        ring = [
+            corner(
+                round(lat + radius * math.sin(2 * math.pi * index / count), 7),
+                round(lon + radius * math.cos(2 * math.pi * index / count), 7),
+            )
+            for index in range(count)
+        ]
+        if swap is not None:
+            first, second = swap
+            ring[first], ring[second] = ring[second], ring[first]
+        return ring
+
     cases = []
 
     def add(name, outer, holes=()):
@@ -284,6 +308,7 @@ def area_cases():
                 "outer": [{"lat": p.lat, "lon": p.lon} for p in outer],
                 "holes": [[{"lat": p.lat, "lon": p.lon} for p in h] for h in holes],
                 "squareMetres": result.square_metres,
+                "perimeterMetres": result.perimeter_metres,
                 "problem": result.problem,
             }
         )
@@ -299,31 +324,84 @@ def area_cases():
         box(10.0, 20.0, 0.03),
         [box(10.002, 20.002, 0.005), box(10.015, 20.015, 0.005)],
     )
+    # Each ring's magnitude is taken before the subtraction, so which way round
+    # a hole was drawn cannot change the answer.
+    add(
+        "hole wound the other way",
+        box(10.0, 20.0, 0.02),
+        [list(reversed(box(10.005, 20.005, 0.01)))],
+    )
     add("hole swallows it", box(10.0, 20.0, 0.01), [box(10.0, 20.0, 0.05)])
     add("two corners", [corner(10.0, 20.0), corner(10.01, 20.0)])
+    # Past where UTM reached, and measured now that nothing is projected.
     add("polar", box(85.0, 20.0, 0.01))
+    add("close to the pole", box(89.98, 20.0, 0.01))
     add(
         "spans many zones",
         [corner(10.0, 0.0), corner(10.0, 20.0), corner(10.1, 20.0), corner(10.1, 0.0)],
     )
-    # 6.25 is an exact tie at one decimal place, so the refusal reads "6.2" in
-    # Python and "6.3" from any rounder that breaks ties away from zero.
+    # 6.25 degrees of longitude was refused for as long as the measurement was
+    # a projection: one UTM zone is six degrees wide. It is measured now, and
+    # it is kept because it is the shape that proves that limit is gone.
     add(
-        "spans exactly 6.25 degrees",
+        "spans 6.25 degrees",
         [corner(10.0, 0.0), corner(10.0, 6.25), corner(10.1, 6.25), corner(10.1, 0.0)],
     )
-    # Wholly past the antimeridian, so the shape's centre is off the map too.
-    # That is the one refusal that comes from projecting the centre, and it is
-    # a different sentence from the one a bad corner produces.
+    # The extent ceiling, from both sides and in both directions. Exactly ten
+    # degrees is measured; the ceiling is what a shape must EXCEED.
+    add("exactly at the extent ceiling", box(0.0, 30.0, MAX_EXTENT_DEGREES))
+    add("just over the ceiling in longitude", box(0.0, 30.0, MAX_EXTENT_DEGREES + 1e-6))
     add(
-        "centre past the antimeridian",
+        "just over the ceiling in latitude",
+        [
+            corner(0.0, 30.0),
+            corner(0.0, 30.01),
+            corner(MAX_EXTENT_DEGREES + 0.001, 30.01),
+            corner(MAX_EXTENT_DEGREES + 0.001, 30.0),
+        ],
+    )
+    # A ring right round the north pole spans every longitude there is, which
+    # the extent ceiling catches without knowing anything about poles.
+    add(
+        "a ring around the north pole",
+        [corner(89.9, 0.0), corner(89.9, 90.0), corner(89.9, 180.0), corner(89.9, -90.0)],
+    )
+    # Straddling the antimeridian, which needs no special case: the step from
+    # one corner to the next is folded into half a turn either way.
+    add(
+        "across the antimeridian",
+        [
+            corner(10.0, 179.99),
+            corner(10.0, -179.99),
+            corner(10.01, -179.99),
+            corner(10.01, 179.99),
+        ],
+    )
+    add(
+        "across the antimeridian, southern",
+        [
+            corner(-33.9, 179.995),
+            corner(-33.9, -179.995),
+            corner(-33.88, -179.995),
+            corner(-33.88, 179.995),
+        ],
+    )
+    # A longitude of 181 is not a place, which is now said in those words
+    # rather than surfacing as a projection library's exception text.
+    add(
+        "every corner past the antimeridian",
         [corner(10.0, 181.0), corner(10.0, 183.0), corner(10.1, 183.0), corner(10.1, 181.0)],
     )
-    # Every check passes, the centre is on the map, and a corner is not.
     add(
-        "corner past the antimeridian",
+        "one corner past the antimeridian",
         [corner(10.0, 179.0), corner(10.0, 181.0), corner(10.1, 181.0), corner(10.1, 179.0)],
     )
+    add(
+        "a corner past the pole",
+        [corner(10.0, 20.0), corner(10.0, 20.01), corner(90.1, 20.01), corner(10.01, 20.0)],
+    )
+    # Holes that cannot be measured refuse the whole shape. Skipping one used
+    # to report a plot with a courtyard as LARGER than it is.
     add(
         "hole past the antimeridian",
         box(10.0, 20.0, 0.05),
@@ -335,6 +413,88 @@ def area_cases():
                 corner(10.02, 179.0),
             ]
         ],
+    )
+    add(
+        "hole with two corners",
+        box(10.0, 20.0, 0.02),
+        [[corner(10.005, 20.005), corner(10.005, 20.01)]],
+    )
+    add(
+        "hole larger than the extent ceiling",
+        box(10.0, 20.0, 0.02),
+        [box(10.005, 20.005, MAX_EXTENT_DEGREES + 1.0)],
+    )
+    # Outlines that cross themselves, which used to be measured and reported
+    # as the signed sum of two lobes that partly cancel.
+    add(
+        "bowtie",
+        [corner(10.0, 20.0), corner(10.0, 20.01), corner(10.01, 20.0), corner(10.01, 20.01)],
+    )
+    add(
+        "lollipop",
+        [
+            corner(10.0, 20.0),
+            corner(10.0, 20.01),
+            corner(10.01, 20.01),
+            corner(10.01, 20.0),
+            corner(10.005, 20.005),
+            corner(10.005, 20.02),
+        ],
+    )
+    # Pinched at one corner rather than crossed: two edges that are not
+    # neighbours share a point, and the shape is still not measurable.
+    add(
+        "figure of eight pinched at a corner",
+        [
+            corner(10.0, 20.0),
+            corner(10.0, 20.01),
+            corner(10.005, 20.005),
+            corner(10.01, 20.01),
+            corner(10.01, 20.0),
+            corner(10.005, 20.005),
+        ],
+    )
+    # And the shapes that must NOT be mistaken for one: a concave outline and
+    # a ring with three corners in a straight line.
+    add(
+        "concave L",
+        [
+            corner(10.0, 20.0),
+            corner(10.0, 20.02),
+            corner(10.01, 20.02),
+            corner(10.01, 20.01),
+            corner(10.02, 20.01),
+            corner(10.02, 20.0),
+        ],
+    )
+    add(
+        "collinear corners",
+        [
+            corner(10.0, 20.0),
+            corner(10.0, 20.005),
+            corner(10.0, 20.01),
+            corner(10.005, 20.01),
+            corner(10.01, 20.01),
+            corner(10.01, 20.005),
+            corner(10.01, 20.0),
+            corner(10.005, 20.0),
+        ],
+    )
+    # The corner ceiling, from both sides. At the ceiling the crossing check
+    # runs and refuses; one corner past it the check is skipped and the same
+    # tangle is measured -- which is what pins the constant to one number in
+    # both languages.
+    add(
+        f"{CROSSING_CHECK_CORNER_LIMIT} corners",
+        wheel(CROSSING_CHECK_CORNER_LIMIT, 10.0, 20.0, 0.01),
+    )
+    add(
+        f"{CROSSING_CHECK_CORNER_LIMIT} corners, tangled",
+        wheel(CROSSING_CHECK_CORNER_LIMIT, 10.0, 20.0, 0.01, swap=(10, 100)),
+    )
+    add(
+        f"{CROSSING_CHECK_CORNER_LIMIT + 1} corners, tangled",
+        wheel(CROSSING_CHECK_CORNER_LIMIT + 1, 10.0, 20.0, 0.01, swap=(10, 100)),
     )
     add("empty", [])
     for index in range(120):
@@ -361,7 +521,9 @@ def banner_text_for(case):
         holes=[points(hole) for hole in case["holes"]],
         source_file="a.kml",
     )
-    measurement = Measurement(case["squareMetres"], case["problem"])
+    measurement = Measurement(
+        case["squareMetres"], case["problem"], case["perimeterMetres"]
+    )
     return area_banner_text(MeasuredArea(area, measurement))
 
 
@@ -369,7 +531,7 @@ def banner_number_cases():
     """Banners for sizes chosen to break a rounder, rather than found by luck.
 
     area_cases() measures real polygons, so the three numbers in each banner
-    are whatever the shoelace sum happened to produce -- which is a poor way
+    are whatever the measurement happened to produce -- which is a poor way
     to reach the values where two languages round differently. Here the size
     is set directly, so the awkward ones can be asked for by name.
 
@@ -377,6 +539,11 @@ def banner_number_cases():
     square kilometres over 1e6. Both divisors are exact powers of ten, so a
     size like 7812.5 stays exact all the way down and lands on a genuine tie
     at nought decimals (7,812.5 m2) and at six (0.0078125 km2).
+
+    The perimeter is set to the same number, which puts each of those ties in
+    the fourth slot of the banner as well -- it prints at nought decimals like
+    the square metres do, and a rounder could be got right in one place and
+    wrong in the other.
     """
     corners = [
         {"lat": 10.0, "lon": 20.0},
@@ -410,13 +577,15 @@ def banner_number_cases():
             holes=[],
             source_file="a.kml",
         )
+        measurement = Measurement(size, None, size)
         cases.append(
             {
                 "name": area.name,
                 "outer": corners,
                 "squareMetres": size,
+                "perimeterMetres": size,
                 "problem": None,
-                "text": area_banner_text(MeasuredArea(area, Measurement(size))),
+                "text": area_banner_text(MeasuredArea(area, measurement)),
             }
         )
     return cases
@@ -627,6 +796,15 @@ if __name__ == "__main__":
                 "banners": [banner_text_for(case) for case in areas],
                 "bannerNumbers": banner_number_cases(),
                 "groupedFixed": grouped_fixed_cases(),
+                # The two thresholds that decide whether a shape is measured
+                # at all. A ceiling that drifted between the implementations
+                # would refuse a shape in one and measure it in the other, and
+                # the fixture shapes either side of each one only prove that
+                # while both sides agree on the number itself.
+                "constants": {
+                    "maxExtentDegrees": MAX_EXTENT_DEGREES,
+                    "crossingCheckCornerLimit": CROSSING_CHECK_CORNER_LIMIT,
+                },
                 "refusals": {
                     "templates": REFUSALS,
                     # Which of them the area cases actually reach. Without

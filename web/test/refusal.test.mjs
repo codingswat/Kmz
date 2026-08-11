@@ -22,7 +22,12 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { polygonArea, REFUSALS } from "../src/geometry.js";
+import {
+  CROSSING_CHECK_CORNER_LIMIT,
+  MAX_EXTENT_DEGREES,
+  polygonArea,
+  REFUSALS,
+} from "../src/geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(readFileSync(join(here, "fixtures.json"), "utf8"));
@@ -88,6 +93,33 @@ test("the browser reaches those refusals by producing the same strings", () => {
     if (problem !== null) produced.add(problem);
   }
   assert.deepEqual([...produced].sort(), refusals.exercised);
+});
+
+test("the two thresholds are the same number in both implementations", () => {
+  // Neither of these can be caught by comparing wording. They decide whether
+  // a shape is refused at all, so a value that drifted would have one version
+  // measuring what the other refuses -- with both of them word-perfect about
+  // it. The fixture shapes either side of each threshold only prove anything
+  // while the thresholds themselves agree.
+  assert.equal(MAX_EXTENT_DEGREES, fixtures.constants.maxExtentDegrees);
+  assert.equal(CROSSING_CHECK_CORNER_LIMIT, fixtures.constants.crossingCheckCornerLimit);
+});
+
+test("a tangle is found at the corner ceiling and skipped past it", () => {
+  // The ceiling exists so a pathological ring cannot make the all-pairs check
+  // quadratic without limit. Both sides have to put it in the same place: a
+  // ring of exactly CROSSING_CHECK_CORNER_LIMIT corners is checked, and the
+  // same tangle one corner larger is measured instead.
+  const limit = CROSSING_CHECK_CORNER_LIMIT;
+  const at = fixtures.areas.find((item) => item.name === `${limit} corners, tangled`);
+  const past = fixtures.areas.find((item) => item.name === `${limit + 1} corners, tangled`);
+  assert.ok(at && past, "the fixture lost its rings at the corner ceiling");
+
+  assert.equal(at.outer.length, limit);
+  assert.equal(past.outer.length, limit + 1);
+  assert.equal(polygonArea(at.outer, []).problem, at.problem);
+  assert.ok(at.problem.includes("crosses itself"), at.problem);
+  assert.equal(polygonArea(past.outer, []).problem, null);
 });
 
 test("no refusal is spelled out anywhere but the list", () => {

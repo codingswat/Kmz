@@ -109,13 +109,13 @@ A batch containing any `<Polygon>` gains a second sheet, `Areas`, using the
 same columns as `Points` — a corner is a point that happens to belong to a
 shape, so it carries every coordinate format too.
 
-Each area is a grey banner giving its name, its size in all three units and
-its corner count, followed by its outline's corners as rows. A hole cut out of
-the shape gets a lighter sub-banner and its own corners beneath it. Corner
-numbering restarts within each ring.
+Each area is a grey banner giving its name, its size in all three units, the
+distance round its outline and its corner count, followed by its outline's
+corners as rows. A hole cut out of the shape gets a lighter sub-banner and its
+own corners beneath it. Corner numbering restarts within each ring.
 
 ```
-An area — 956,863 m² · 95.686 ha · 0.956863 km² · 4 corners
+An area — 957,503 m² · 95.750 ha · 0.957503 km² · 3,996 m perimeter · 4 corners
 hole 1 — 4 corners
 ```
 
@@ -123,13 +123,36 @@ Sizes are **flat map area** — the shape as traced on a map, not surface area
 following the terrain. A sloping hillside's true surface is larger than its
 footprint, and the elevation data needed for that is not in a KML.
 
-Corners are projected into UTM and measured with the shoelace formula, every
-corner forced into the zone of the shape's centre so a shape near a zone
-boundary is not measured against two different grids. Holes are subtracted.
+Measurement is on the WGS-84 ellipsoid itself. Area comes from the spherical
+excess on the authalic sphere — the sphere with the same surface area as the
+ellipsoid — and the perimeter from a Vincenty inverse along each edge. Holes
+are subtracted from the area; the perimeter is the outline's own length,
+because a hole is a second fence rather than part of the first.
+
+> **Every area number changed when this landed.** Areas used to be measured
+> by forcing every corner into one UTM zone and applying the shoelace formula,
+> which cost up to 0.2% and refused anything polar or wider than a zone. Every
+> area in a new workbook therefore differs slightly from the same area in an
+> old one — about 0.07% on a typical parcel, and always toward the true
+> figure. It is not a bug, and old workbooks are not worth reconciling against
+> new ones. Two other things moved with it: polar shapes and shapes up to 10°
+> across are measured now where they used to be refused, and self-intersecting
+> outlines are refused now where they used to be measured.
 
 Some shapes cannot be measured and say so on the banner instead of showing a
-number: fewer than three distinct corners, beyond the latitudes UTM covers, or
-spanning more than the six degrees of longitude one zone covers.
+number:
+
+| The banner says | What it means |
+|---|---|
+| needs at least 3 distinct corners | an outline that encloses nothing |
+| has a corner that is not a place on Earth | a latitude past a pole, a longitude past the antimeridian, or a coordinate that is not a number |
+| is larger than any plot this tool is meant to measure | the outline's bounding box is over 10° across, which in practice means a mis-keyed coordinate |
+| its outline crosses itself | a bowtie or a doubled-back spike, where the enclosed area is not the area of anything |
+| has a hole that cannot be measured | any of the above, in a hole. The whole shape is refused rather than reporting it as larger than it is |
+| its holes cover the whole shape | nothing is left to measure |
+
+The first four are checked on holes as well as on the outline. Whether a hole
+actually falls inside the outline is not checked.
 
 ### The Issues sheet
 

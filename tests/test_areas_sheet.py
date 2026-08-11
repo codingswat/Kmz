@@ -111,6 +111,11 @@ class TestBanners:
         assert "ha" in text
         assert "km²" in text
 
+    def test_the_banner_carries_the_perimeter(self):
+        # A 0.01 degree box: about 1.1 km a side, so about 4.4 km round.
+        text = banner_texts(write([make_area()])["Areas"])[0]
+        assert "4,405 m perimeter" in text
+
     def test_the_banner_counts_the_corners(self):
         assert "4 corners" in banner_texts(write([make_area()])["Areas"])[0]
 
@@ -206,29 +211,36 @@ class TestHoles:
         assert holed < plain
 
 
+def crossed_area():
+    """A bowtie: the corners of a square, visited in the wrong order.
+
+    This used to be a polar shape, which is measured now that the measurement
+    is not a projection. A crossed outline is the refusal that replaced it.
+    """
+    ring = box(10.0, 30.0, 0.01, "Knot")
+    ring[2], ring[3] = ring[3], ring[2]
+    return Area(
+        name="Knot",
+        description="",
+        outer=ring,
+        holes=[],
+        source_file="a.kml",
+    )
+
+
 class TestUnmeasurableAreas:
     def test_the_banner_says_why_rather_than_showing_a_number(self):
-        polar = Area(
-            name="Ice",
-            description="",
-            outer=box(85.0, 30.0, 0.01, "Ice"),
-            holes=[],
-            source_file="a.kml",
-        )
-        text = banner_texts(write([polar])["Areas"])[0]
+        text = banner_texts(write([crossed_area()])["Areas"])[0]
         assert "not measured" in text.lower()
-        assert "utm" in text.lower()
+        assert "crosses itself" in text.lower()
         assert "m²" not in text
 
+    def test_the_banner_offers_no_perimeter_either(self):
+        # A refused outline is exactly the one whose length means nothing.
+        assert "perimeter" not in banner_texts(write([crossed_area()])["Areas"])[0]
+
     def test_its_corners_are_still_listed(self):
-        polar = Area(
-            name="Ice",
-            description="",
-            outer=box(85.0, 30.0, 0.01, "Ice"),
-            holes=[],
-            source_file="a.kml",
-        )
-        assert len(data_rows(write([polar])["Areas"])) == 4
+        assert len(data_rows(write([crossed_area()])["Areas"])) == 4
 
 
 class TestCornerCount:

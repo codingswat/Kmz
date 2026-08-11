@@ -193,10 +193,14 @@ export function areaBannerText(measured) {
     return `${name} — area not measured: ${measurement.problem} · ${corners}`;
   }
 
+  // The perimeter sits before the corner count because both are about the
+  // outline, and after the three areas because the areas are what the sheet
+  // is for. It is the outline's own length: a hole is a second fence.
   return (
     `${name} — ${groupedFixed(measurement.squareMetres, 0)} m² · ` +
     `${groupedFixed(measurement.hectares, 3)} ha · ` +
-    `${groupedFixed(measurement.squareKilometres, 6)} km² · ${corners}`
+    `${groupedFixed(measurement.squareKilometres, 6)} km² · ` +
+    `${groupedFixed(measurement.perimeterMetres, 0)} m perimeter · ${corners}`
   );
 }
 

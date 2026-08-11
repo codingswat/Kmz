@@ -56,8 +56,8 @@ UPLOAD_PAGE = (
 <p>Choose one or more .kml or .kmz files. You will get one Excel workbook back.</p>
 <p class="note">
   Points become one row each. Areas get their own sheet, with their size in
-  m², hectares and km², and their corners listed beneath. Routes and tracks
-  are counted but not extracted.
+  m², hectares and km², the distance round their outline, and their corners
+  listed beneath. Routes and tracks are counted but not extracted.
 </p>
 <p class="note">Total upload size must be under {{ upload_limit }}.</p>
 

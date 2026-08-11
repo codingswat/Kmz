@@ -203,9 +203,13 @@ def area_banner_text(measured) -> str:
     if size.square_metres is None:
         return f"{name} — area not measured: {size.problem} · {corners}"
 
+    # The perimeter sits before the corner count because both are about the
+    # outline, and after the three areas because the areas are what the sheet
+    # is for. It is the outline's own length: a hole is a second fence.
     return (
         f"{name} — {size.square_metres:,.0f} m² · "
-        f"{size.hectares:,.3f} ha · {size.square_kilometres:,.6f} km² · {corners}"
+        f"{size.hectares:,.3f} ha · {size.square_kilometres:,.6f} km² · "
+        f"{size.perimeter_metres:,.0f} m perimeter · {corners}"
     )
 
 
