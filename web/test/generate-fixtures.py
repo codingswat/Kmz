@@ -41,21 +41,33 @@ from kmz_points.table import COLUMNS, build_table_rows  # noqa: E402
 from kmz_points.workbook_facts import workbook_facts  # noqa: E402
 
 
+# The awkward places, kept apart from the random cover because both this
+# module and table_points() need to know where they stop. A coordinate that
+# only misbehaves exactly ON a boundary will never be found by 400 random
+# draws, so this is where one belongs.
+AWKWARD_COORDINATES = [
+    (34.567890, 38.123456),
+    (-0.180653, -78.467834),   # south, whole-degree part 0
+    (-33.856784, 151.215297),
+    (51.507351, -0.127758),
+    (0.0, 0.0),
+    (83.9, 20.0),              # near UTM's northern limit
+    (-79.9, -170.0),           # near the southern limit, zone 2
+    (56.5, 5.0),               # the Norway zone exception
+    (72.5, 10.0),              # the Svalbard exceptions
+    (60.0, 179.999),           # against the antimeridian
+    (84.0, 20.0),              # ON UTM's northern limit, which the Svalbard
+    (84.0, 5.0),               # exception still covers -- two of its ranges
+    (84.0, -20.0),             # and a longitude where it does not apply
+    (0.0, 180.0),              # ON the antimeridian, which folds to zone 1
+    (-33.0, 180.0),            # the same fold, south, where northing is false
+]
+
+
 def coordinate_cases():
     """A deterministic spread: the awkward places, then random cover."""
     random.seed(20260810)
-    points = [
-        (34.567890, 38.123456),
-        (-0.180653, -78.467834),   # south, whole-degree part 0
-        (-33.856784, 151.215297),
-        (51.507351, -0.127758),
-        (0.0, 0.0),
-        (83.9, 20.0),              # near UTM's northern limit
-        (-79.9, -170.0),           # near the southern limit, zone 2
-        (56.5, 5.0),               # the Norway zone exception
-        (72.5, 10.0),              # the Svalbard exceptions
-        (60.0, 179.999),           # against the antimeridian
-    ]
+    points = list(AWKWARD_COORDINATES)
     points += [
         (random.uniform(-79.5, 83.5), random.uniform(-179.9, 179.9))
         for _ in range(400)
@@ -300,10 +312,10 @@ def table_points(documents, coordinates):
         for c in area["outer"]
     ]
 
-    # The first ten coordinate cases are the deliberately awkward ones; the
-    # rest are random cover, sampled rather than taken whole so the fixture
-    # stays a readable size.
-    spread = coordinates[:10] + coordinates[10::10]
+    # The awkward cases are taken whole; the random cover that follows them is
+    # sampled rather than taken whole so the fixture stays a readable size.
+    edge = len(AWKWARD_COORDINATES)
+    spread = coordinates[:edge] + coordinates[edge::10]
     points += [
         Point(
             f"case {index}",

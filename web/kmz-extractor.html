@@ -531,10 +531,22 @@ function latitudeBand(lat) {
   return letters[Math.floor((lat + 80) / 8)];
 }
 
+/** An angle in radians folded into [-pi, pi). Mirrors Python's utm.mod_angle. */
+function modAngle(value) {
+  return ((value + Math.PI) % (2 * Math.PI)) - Math.PI;
+}
+
 function zoneNumber(lat, lon) {
+  // Fold into [-180, 180) before anything else, exactly as Python's utm does.
+  // Without this a longitude of exactly 180 produced zone 61, which is not a
+  // zone -- there are 60 -- and the antimeridian is a real place to stand.
+  lon = ((((lon % 360) + 540) % 360)) - 180;
+
   // Two exceptions to the regular 6-degree grid, both long-standing.
   if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) return 32;
-  if (lat >= 72 && lat < 84 && lon >= 0) {
+  // 84 inclusive: the band runs up to and including its top edge, and a
+  // latitude of exactly 84 was taking the ordinary grid instead of Svalbard's.
+  if (lat >= 72 && lat <= 84 && lon >= 0) {
     if (lon < 9) return 31;
     if (lon < 21) return 33;
     if (lon < 33) return 35;
@@ -565,7 +577,11 @@ function toUtm(lat, lon, forceZone = null) {
   const n = A / Math.sqrt(1 - E2 * Math.sin(latRad) ** 2);
   const t = Math.tan(latRad) ** 2;
   const c = E_PRIME2 * Math.cos(latRad) ** 2;
-  const a = Math.cos(latRad) * (lonRad - centralMeridian);
+  // Wrapped into [-pi, pi], as Python's utm.mod_angle does. Without it a
+  // point just the far side of the antimeridian sits 357 degrees from its
+  // own zone's central meridian instead of 3, and the series expansion below
+  // -- which assumes a small angle -- returns billions of metres.
+  const a = Math.cos(latRad) * modAngle(lonRad - centralMeridian);
 
   const m =
     A *

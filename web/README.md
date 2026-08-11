@@ -104,21 +104,27 @@ So the browser run remains the authority for "`kml.js` works in a browser".
 The shim answers the different question of whether `kml.js` agrees with
 `kml_parser.py`, which nothing was asking before.
 
-### Known coordinate gaps
+### Known coordinate gap
 
-Three places `src/convert.js` does not match Python. All three are boundaries
-the 410-coordinate sweep misses, all three are pinned by name in
-`test/cross-check.test.mjs`, and none is fixed yet:
+One place `src/convert.js` does not match Python. It is a boundary the
+410-coordinate sweep misses, and it is pinned by name in
+`test/cross-check.test.mjs`:
 
 | Input | Python | Browser |
 |---|---|---|
-| latitude exactly 84 | applies the Svalbard zone exception | does not (`< 84`, not `<= 84`) |
-| longitude exactly 180 | folds to −180, zone 1 | zone 61, which does not exist |
 | latitude outside −80…84 | an MGRS reference, via the polar UPS grid | nothing; UTM only |
 
-The first two are one-line fixes; the third needs UPS implementing. The
-projected metres are right in all three cases — it is the printed zone, and
-the polar grid reference, that differ.
+Closing it means implementing UPS, which is a good deal more than a boundary
+fix. The projected metres are right either way — it is the polar grid
+reference that is missing.
+
+Two others were found alongside it and have been fixed, both asserted
+positively now rather than pinned: a latitude of exactly 84 missed the
+Svalbard zone exception, and a longitude of exactly 180 produced zone 61,
+which does not exist — there are 60. The second needed the angle from the
+zone's central meridian wrapping into [−π, π] as well, or a point just the
+far side of the antimeridian sat 357° from its own meridian and the series
+expansion returned billions of metres.
 
 ## Does it agree with the Python?
 

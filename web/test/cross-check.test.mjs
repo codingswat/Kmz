@@ -99,27 +99,38 @@ test("area measurement agrees with Python on every shape", () => {
  * boundary: latitude exactly 84, longitude exactly 180, and latitude past the
  * band UTM covers at all.
  */
-test("the known coordinate gaps are still exactly these three", () => {
-  // 1. The Svalbard zone exception. The utm package applies it up to and
-  //    INCLUDING 84 degrees; convert.js stops just below. Only longitudes in
-  //    the exception's own ranges show it -- elsewhere the regular grid
-  //    happens to give the same answer.
-  assert.equal(toUtm(84, 20).zone, 34, "the Svalbard upper bound was fixed");
-  assert.equal(
-    fixtures.coordinates.every((item) => item.lat !== 84),
-    true,
-    "a coordinate case now sits on 84, so this belongs in the main check",
-  );
+test("the boundary coordinates agree with Python", () => {
+  // Both of these were gaps until the sweep above was widened enough to name
+  // them. They are asserted positively now, against the values the utm
+  // package actually returns, so a regression reads as a disagreement rather
+  // than as a pin nobody removed.
 
-  // 2. Longitude exactly 180. The utm package folds it to -180 and returns
-  //    zone 1; convert.js computes zone 61, which does not exist. The
-  //    projected metres agree either way, so only the printed zone is wrong.
-  assert.equal(toUtm(0, 180).zone, 61, "the antimeridian zone was fixed");
+  // The Svalbard exception runs up to and INCLUDING 84 degrees. Only
+  // longitudes inside the exception's own ranges show it -- elsewhere the
+  // regular grid happens to give the same answer, which is why 410 random
+  // coordinates never caught this.
+  assert.equal(toUtm(84, 20).zone, 33);
+  assert.equal(toUtm(84, 20).band, "X");
+
+  // Longitude exactly 180 folds to -180 and lands in zone 1. Computing it
+  // straight gave zone 61, and there are only 60.
+  assert.equal(toUtm(0, 180).zone, 1);
   assert.equal(toUtm(0, -180).zone, 1);
+  assert.equal(Math.round(toUtm(0, 180).easting), 166021);
+  assert.equal(Math.round(toUtm(0, 180).northing), 0);
+});
 
-  // 3. MGRS outside UTM's latitude band. Python's C library falls back to the
-  //    polar UPS grid; convert.js implements UTM only and gives up. This is
-  //    the one the table row check has to excuse.
+/**
+ * One gap is left, and it is pinned rather than fixed.
+ *
+ * Pinned so it is a known quantity rather than a surprise, so it cannot
+ * quietly get worse, and so whoever fixes it is told to delete the pin.
+ */
+test("the one remaining coordinate gap is still exactly this one", () => {
+  // MGRS outside UTM's latitude band. Python's C library falls back to the
+  // polar UPS grid; convert.js implements UTM only and gives up. Closing it
+  // means implementing UPS, which is a good deal more than a boundary fix.
+  // This is the gap the table row check has to excuse.
   assert.equal(toUtm(85, 20), null);
   assert.equal(toMgrs(85, 20), null, "polar MGRS arrived; the table check can stop excusing it");
   assert.equal(toMgrs(-85, 20), null);
