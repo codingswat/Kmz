@@ -4,18 +4,34 @@ A thin shell over the pipeline: this module owns widgets and the list of
 loaded files, and nothing else. Drag-and-drop is optional -- if tkinterdnd2
 or the underlying tkdnd library is missing, the window still opens and the
 Browse button does the same job.
+
+Reading files and writing the workbook happen on a worker thread, because a
+large KMZ takes long enough on the main thread that Windows paints the window
+"Not Responding" and people force-quit an app that was working fine. Tk is
+not thread-safe -- only the thread that created a widget may touch it -- so
+the split is strict: the worker runs pipeline calls and posts plain data to a
+queue, and a poll on the main thread drains that queue and performs every
+widget update. Nothing calls root.after from the worker; Tk's own
+documentation is ambiguous about whether that is allowed, and the poll costs
+nothing.
 """
 
 from __future__ import annotations
 
 import contextlib
+import queue
 import re
+import threading
+import time
 import tkinter as tk
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
-from typing import Literal
+from typing import Literal, Protocol
 
+from kmz_points.models import BatchSummary
 from kmz_points.pipeline import (
     LoadedFile,
     export_to_excel,
@@ -151,11 +167,139 @@ def _dialog_notify(kind: str, title: str, message: str) -> None:
     }[kind](title, message)
 
 
+# ----------------------------------------------------------------- workers
+
+_POLL_MS = 50  # how often the main thread looks for results
+_IDLE_TICK = 0.005  # how long wait_until_idle sleeps between pumps
+
+# There is deliberately no Cancel button. A batch runs for seconds to tens of
+# seconds and the worker can only stop between files, so Cancel would be
+# unable to interrupt the one thing slow enough to make anybody press it --
+# a single large file's parse. A button that appears to stop the work and
+# does not is a worse lie than a clear message saying what is happening.
+
+
+@dataclass
+class _FileLoaded:
+    """One input finished parsing."""
+
+    item: LoadedFile
+
+
+@dataclass
+class _LoadDone:
+    """The batch is over, however many files it managed."""
+
+
+@dataclass
+class _Exported:
+    """The workbook run finished; the summary says whether anything was written."""
+
+    summary: BatchSummary
+
+
+@dataclass
+class _ExportFailed:
+    """The workbook could not be written at all."""
+
+    error: str
+
+
+_Message = _FileLoaded | _LoadDone | _Exported | _ExportFailed
+
+
+class _Executor(Protocol):
+    """Where pipeline work runs. Injected so tests can make it synchronous."""
+
+    def submit(self, work: Callable[[], None]) -> None: ...
+
+
+class _Background:
+    """Runs work off the main thread; results return through the queue.
+
+    A fresh daemon thread per batch rather than a pool: batches are already
+    serialised by the busy flag, so a pool would add a shutdown to get wrong
+    on the way out and nothing else.
+    """
+
+    def submit(self, work: Callable[[], None]) -> None:
+        threading.Thread(target=work, daemon=True).start()
+
+
+class _Inline:
+    """Runs work immediately on the calling thread. For tests."""
+
+    def submit(self, work: Callable[[], None]) -> None:
+        work()
+
+
+def _load_job(
+    paths: list[Path],
+    results: queue.Queue[_Message],
+    cancelled: threading.Event,
+) -> Callable[[], None]:
+    """Build the work a load batch performs off the main thread.
+
+    A module-level closure over paths, the queue and a flag, rather than a
+    method: with no ``self`` in scope there is no route from the worker to a
+    widget, which is the property that keeps this safe rather than merely
+    careful.
+    """
+
+    def work() -> None:
+        for path in paths:
+            if cancelled.is_set():  # the window closed mid-batch
+                return
+            try:
+                item = load_file(path)
+            except Exception as exc:
+                # load_file promises never to raise and keeps that promise.
+                # Belt and braces anyway: a worker that died here would leave
+                # the buttons disabled forever with nothing on screen saying
+                # why, which is the failure this module exists to avoid.
+                item = LoadedFile(path=path, error=f"{path.name}: {exc}")
+            results.put(_FileLoaded(item))
+        results.put(_LoadDone())
+
+    return work
+
+
+def _export_job(
+    loaded: list[LoadedFile],
+    output_dir: str,
+    results: queue.Queue[_Message],
+) -> Callable[[], None]:
+    """Build the work an export performs off the main thread."""
+
+    def work() -> None:
+        try:
+            summary = export_to_excel(loaded, output_dir)
+        except Exception as exc:  # a full-stop failure, e.g. unwritable folder
+            results.put(_ExportFailed(str(exc)))
+        else:
+            results.put(_Exported(summary))
+
+    return work
+
+
+def _row_label(item: LoadedFile) -> str:
+    """One line of the loaded-files list."""
+    if not item.ok:
+        return f"{item.name}  -  FAILED: {item.error}"
+    skipped = f", {item.skipped} skipped" if item.skipped else ""
+    return f"{item.name}  -  {item.point_count} point(s){skipped}"
+
+
 class App:
-    def __init__(self, notify=None):
+    def __init__(self, notify=None, executor=None):
         # Notifications are injected so the window can be driven headlessly --
         # a modal dialog blocks forever when there is nobody to dismiss it.
         self.notify = notify or _dialog_notify
+        # The executor is injected for the same reason: tests hand in one that
+        # runs the work inline, so an assertion on the line after add_paths
+        # sees a finished batch instead of a thread that has barely started.
+        self._executor: _Executor = executor or _Background()
+
         self.root, self.dnd_available = _make_root()
         self.root.title("KML / KMZ Point Extractor")
         self.root.geometry("760x560")
@@ -165,8 +309,17 @@ class App:
         self.output_dir = tk.StringVar()
         self.status = tk.StringVar(value="Ready. Add KML or KMZ files to begin.")
 
+        self._results: queue.Queue[_Message] = queue.Queue()
+        self._cancelled = threading.Event()
+        self._busy = False
+        self._pending: list[str] = []  # dropped or browsed mid-batch
+        self._batch_total = 0
+        self._batch_done = 0
+        self._poll_id: str | None = None
+
         self._build_widgets()
         self._enable_drop()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------ UI
 
@@ -214,11 +367,14 @@ class App:
 
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=(_GAP * 2, 0))
-        ttk.Button(buttons, text="Browse...", command=self.browse).pack(side="left")
-        ttk.Button(buttons, text="Remove selected", command=self.remove_selected).pack(
-            side="left", padx=_GAP
+        self.browse_button = ttk.Button(buttons, text="Browse...", command=self.browse)
+        self.browse_button.pack(side="left")
+        self.remove_button = ttk.Button(
+            buttons, text="Remove selected", command=self.remove_selected
         )
-        ttk.Button(buttons, text="Clear all", command=self.clear_all).pack(side="left")
+        self.remove_button.pack(side="left", padx=_GAP)
+        self.clear_button = ttk.Button(buttons, text="Clear all", command=self.clear_all)
+        self.clear_button.pack(side="left")
 
         ttk.Label(outer, text="LOADED FILES", style="Section.TLabel").pack(
             anchor="w", pady=(_GAP * 2, _GAP // 2)
@@ -264,12 +420,24 @@ class App:
             side="left", padx=(_GAP, 0)
         )
 
-        ttk.Button(
+        self.export_button = ttk.Button(
             outer,
             text="Export to Excel",
             command=self.export,
             style="Accent.TButton",
-        ).pack(fill="x", pady=(_GAP * 2, _GAP * 2))
+        )
+        self.export_button.pack(fill="x", pady=(_GAP * 2, _GAP * 2))
+
+        # Everything that would mutate the file list or read it while a worker
+        # is using it. The output folder row stays live: choosing where the
+        # workbook goes costs nothing and is the one thing worth doing while
+        # a batch reads.
+        self._work_buttons = (
+            self.browse_button,
+            self.remove_button,
+            self.clear_button,
+            self.export_button,
+        )
 
         ttk.Separator(outer).pack(fill="x")
         ttk.Label(
@@ -308,26 +476,15 @@ class App:
             self.output_dir.set(chosen)
 
     def add_paths(self, paths: list[str]):
-        """Load each path, skipping any already in the list."""
-        known = {str(item.path) for item in self.loaded}
-        added = 0
+        """Queue paths for loading, skipping any already in the list.
 
-        for raw in paths:
-            path = Path(raw)
-            if str(path) in known:
-                continue
-            item = load_file(path)
-            self.loaded.append(item)
-            known.add(str(path))
-            added += 1
-
-        if added:
-            self._refresh_file_list()
-            if not self.output_dir.get():
-                self.output_dir.set(str(self.loaded[0].path.parent))
-
-        total = sum(item.point_count for item in self.loaded)
-        self.status.set(f"{len(self.loaded)} file(s) loaded, {total} point(s) found.")
+        Returns as soon as the work is handed off. Paths arriving while a
+        batch is running wait their turn rather than being dropped -- dragging
+        a second folder in is a normal thing to do while the first reads.
+        """
+        self._pending.extend(paths)
+        if not self._busy:
+            self._start_load()
 
     def remove_selected(self):
         for index in sorted(self.file_list.curselection(), reverse=True):
@@ -341,6 +498,12 @@ class App:
         self.status.set("Cleared.")
 
     def export(self):
+        if self._busy:
+            # Refused rather than queued: exporting half a batch would produce
+            # a workbook missing files the user can see in the list.
+            self.status.set("Still working. Wait for the current batch to finish.")
+            return
+
         if not self.loaded:
             self.status.set("No files loaded. Add KML or KMZ files first.")
             return
@@ -353,30 +516,156 @@ class App:
             self.notify("error", "Cannot export", problem)
             return
 
-        try:
-            summary = export_to_excel(self.loaded, target)
-        except Exception as exc:  # a full-stop failure, e.g. unwritable folder
-            self.status.set(f"Export failed: {exc}")
-            self.notify("error", "Export failed", str(exc))
+        self._set_busy(True)
+        # No progress bar. Writing a workbook is one openpyxl call with no
+        # progress to report, and a bar that moved on a timer would say
+        # something the program does not know.
+        self.status.set("Writing the workbook...")
+        # A copy, so the list the worker walks cannot be the one the main
+        # thread is free to keep changing.
+        self._submit(_export_job(list(self.loaded), target, self._results))
+
+    def wait_until_idle(self, timeout: float = 10.0) -> None:
+        """Pump the Tk event loop until no work is outstanding.
+
+        For tests and anything else driving the window without mainloop: the
+        poll that collects worker results is an after callback, so with no
+        event loop turning, results never arrive.
+        """
+        deadline = time.monotonic() + timeout
+        while self._busy and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(_IDLE_TICK)
+
+    # ------------------------------------------------------------ internal
+
+    def _start_load(self):
+        """Begin a batch from whatever is pending. Main thread only."""
+        known = {str(item.path) for item in self.loaded}
+        batch: list[Path] = []
+        for raw in self._pending:
+            path = Path(raw)
+            if str(path) in known:
+                continue
+            known.add(str(path))
+            batch.append(path)
+        self._pending.clear()
+
+        if not batch:  # every path was already in the list
+            self._report_loaded()
             return
 
+        self._batch_total = len(batch)
+        self._batch_done = 0
+        self._set_busy(True)
+        self.status.set(f"Reading {len(batch)} file(s)...")
+        self._submit(_load_job(batch, self._results, self._cancelled))
+
+    def _submit(self, work):
+        """Hand work to the executor and pick up anything it has already done.
+
+        The drain is what makes an inline executor work: that one finishes
+        before submit returns, so this is where its results get applied and a
+        test needs no event loop at all. On a thread the queue is normally
+        still empty here and the poll below does the real collecting.
+        """
+        self._executor.submit(work)
+        self._drain()
+        if self._busy:
+            self._schedule_poll()
+
+    def _schedule_poll(self):
+        if self._poll_id is None:
+            self._poll_id = self.root.after(_POLL_MS, self._poll)
+
+    def _poll(self):
+        self._poll_id = None
+        self._drain()
+        if self._busy:
+            self._schedule_poll()
+
+    def _drain(self):
+        """Apply every result the worker has posted. Main thread only.
+
+        This is the only place widgets and self.loaded change in response to
+        worker output, which is what makes the threading safe.
+        """
+        while True:
+            try:
+                message = self._results.get_nowait()
+            except queue.Empty:
+                return
+            self._apply(message)
+
+    def _apply(self, message: _Message) -> None:
+        if isinstance(message, _FileLoaded):
+            self._file_loaded(message.item)
+        elif isinstance(message, _LoadDone):
+            self._load_finished()
+        elif isinstance(message, _Exported):
+            self._export_finished(message.summary)
+        else:
+            self._set_busy(False)
+            self.status.set(f"Export failed: {message.error}")
+            self.notify("error", "Export failed", message.error)
+
+    def _file_loaded(self, item: LoadedFile) -> None:
+        self.loaded.append(item)
+        self.file_list.insert("end", _row_label(item))
+        if not self.output_dir.get():
+            self.output_dir.set(str(item.path.parent))
+
+        self._batch_done += 1
+        self.status.set(f"Read {self._batch_done} of {self._batch_total} file(s)...")
+
+    def _load_finished(self) -> None:
+        self._set_busy(False)
+        if self._pending:  # arrived while that batch was running
+            self._start_load()
+            return
+        self._report_loaded()
+
+    def _export_finished(self, summary: BatchSummary) -> None:
+        self._set_busy(False)
         self.status.set(summary.as_text().replace("\n", "   |   "))
         if summary.output_path:
             self.notify("info", "Export complete", summary.as_text())
         else:
             self.notify("warning", "Nothing exported", summary.as_text())
 
-    # ------------------------------------------------------------ internal
+    def _report_loaded(self) -> None:
+        total = sum(item.point_count for item in self.loaded)
+        self.status.set(f"{len(self.loaded)} file(s) loaded, {total} point(s) found.")
+
+    def _set_busy(self, busy: bool) -> None:
+        """Flip the window between working and idle. Main thread only."""
+        self._busy = busy
+        state = "disabled" if busy else "normal"
+        for button in self._work_buttons:
+            button.config(state=state)
+
+    def _on_close(self):
+        """Leave without waiting for the worker.
+
+        Worker threads are daemons and check the cancelled flag between files,
+        so closing mid-batch cannot hang the process. What must not happen is
+        a queued poll firing against widgets that no longer exist.
+
+        Closing during an export can leave a half-written workbook behind,
+        because one openpyxl call has no point to stop at. That is the cost of
+        a window that closes when asked; before this, the click simply queued
+        behind the export and the window sat there looking crashed.
+        """
+        self._cancelled.set()
+        if self._poll_id is not None:
+            self.root.after_cancel(self._poll_id)
+            self._poll_id = None
+        self.root.destroy()
 
     def _refresh_file_list(self):
         self.file_list.delete(0, "end")
         for item in self.loaded:
-            if item.ok:
-                skipped = f", {item.skipped} skipped" if item.skipped else ""
-                label = f"{item.name}  -  {item.point_count} point(s){skipped}"
-            else:
-                label = f"{item.name}  -  FAILED: {item.error}"
-            self.file_list.insert("end", label)
+            self.file_list.insert("end", _row_label(item))
 
     def run(self):  # pragma: no cover - blocks on the event loop
         self.root.mainloop()

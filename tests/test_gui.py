@@ -67,12 +67,17 @@ class TestParseDropPayload:
 class TestApp:
     @pytest.fixture
     def app(self):
-        from kmz_points.gui import App
+        from kmz_points.gui import App, _Inline
 
         # Record notifications instead of opening modals, which would block
-        # forever with nobody there to dismiss them.
+        # forever with nobody there to dismiss them. The inline executor runs
+        # the loading and exporting the real window does on a worker thread,
+        # so the assertions below can read the result on the next line; the
+        # threaded path has its own tests in test_gui_responsive.py.
         notifications = []
-        instance = App(notify=lambda *args: notifications.append(args))
+        instance = App(
+            notify=lambda *args: notifications.append(args), executor=_Inline()
+        )
         instance.notifications = notifications
         yield instance
         instance.root.destroy()

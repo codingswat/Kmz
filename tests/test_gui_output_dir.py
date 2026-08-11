@@ -21,10 +21,14 @@ pytestmark = pytest.mark.skipif(not _tk_usable(), reason="no usable Tk display")
 
 @pytest.fixture
 def app():
-    from kmz_points.gui import App
+    from kmz_points.gui import App, _Inline
 
+    # Inline, so loading and exporting -- both threaded in the real window --
+    # have finished by the time the call returns.
     notifications = []
-    instance = App(notify=lambda *args: notifications.append(args))
+    instance = App(
+        notify=lambda *args: notifications.append(args), executor=_Inline()
+    )
     instance.notifications = notifications
     yield instance
     instance.root.destroy()
