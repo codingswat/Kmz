@@ -6,6 +6,7 @@
  * banner and its corners, and an Issues sheet when anything failed.
  */
 
+import { exactFixed } from "./convert.js";
 import { buildWorkbook, columnLetter, Styles } from "./xlsx.js";
 import { bands, buildTableRows, COLUMNS, headers, SOURCE_FILE_INDEX } from "./table.js";
 
@@ -164,7 +165,26 @@ function pointsSheet(rows, look) {
   };
 }
 
-function areaBannerText(measured) {
+/**
+ * `value` to `places` decimals with thousands separators, exactly as Python's
+ * ``format(x, f",.{p}f")``.
+ *
+ * The separator is the easy half. The rounding is exactFixed's, and it is
+ * there because this was written as `toLocaleString("en-US", …)` and that
+ * disagreed with Python on roughly one banner number in fifty -- see
+ * exactFixed in convert.js for the two distinct reasons why.
+ */
+export function groupedFixed(value, places) {
+  const text = exactFixed(value, places);
+  const point = text.indexOf(".");
+  const whole = point === -1 ? text : text.slice(0, point);
+  const rest = point === -1 ? "" : text.slice(point);
+  // \B keeps the regex off the front of the string, so "-1234" groups as
+  // "-1,234" and never as "-,1234".
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + rest;
+}
+
+export function areaBannerText(measured) {
   const { area, measurement } = measured;
   const name = area.name || "<unnamed>";
   const corners = `${cornerCount(area)} corners`;
@@ -173,16 +193,10 @@ function areaBannerText(measured) {
     return `${name} — area not measured: ${measurement.problem} · ${corners}`;
   }
 
-  const round = (value, places) =>
-    value.toLocaleString("en-US", {
-      minimumFractionDigits: places,
-      maximumFractionDigits: places,
-    });
-
   return (
-    `${name} — ${round(measurement.squareMetres, 0)} m² · ` +
-    `${round(measurement.hectares, 3)} ha · ` +
-    `${round(measurement.squareKilometres, 6)} km² · ${corners}`
+    `${name} — ${groupedFixed(measurement.squareMetres, 0)} m² · ` +
+    `${groupedFixed(measurement.hectares, 3)} ha · ` +
+    `${groupedFixed(measurement.squareKilometres, 6)} km² · ${corners}`
   );
 }
 

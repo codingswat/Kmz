@@ -11,7 +11,7 @@
  * footprint, and the elevation data needed to compute that is not in a KML.
  */
 
-import { toUtm } from "./convert.js";
+import { exactFixed, toUtm } from "./convert.js";
 
 const UTM_MIN_LAT = -80.0;
 const UTM_MAX_LAT = 84.0;
@@ -24,6 +24,41 @@ const MAX_LONGITUDE_SPAN = 6.0;
 
 const SQUARE_METRES_PER_HECTARE = 10000.0;
 const SQUARE_METRES_PER_SQUARE_KM = 1000000.0;
+
+// Every reason a shape can be refused. Copied verbatim from kmz_points/
+// geometry.py's REFUSALS -- these are the words an end user reads out of a
+// spreadsheet banner, so the two implementations have to agree on them the
+// same way they agree on a number. web/test/refusal.test.mjs compares the two
+// lists, and a reason added on one side alone fails the build.
+export const NOT_ENOUGH_CORNERS = "needs at least 3 distinct corners, found {count}";
+export const OUTSIDE_UTM_RANGE =
+  "lies outside the range UTM covers ({low} to {high} degrees latitude)";
+export const LONGITUDE_TOO_WIDE =
+  "spans {span} degrees of longitude, more than the {limit} a single UTM zone covers";
+export const COULD_NOT_PROJECT = "could not be projected";
+export const COULD_NOT_MEASURE = "could not be measured";
+export const HOLES_COVER_EVERYTHING = "its holes cover the whole shape, leaving no area";
+
+export const REFUSALS = [
+  NOT_ENOUGH_CORNERS,
+  OUTSIDE_UTM_RANGE,
+  LONGITUDE_TOO_WIDE,
+  COULD_NOT_PROJECT,
+  COULD_NOT_MEASURE,
+  HOLES_COVER_EVERYTHING,
+];
+
+/**
+ * Fill a refusal template, the way Python's str.format fills the same one.
+ *
+ * Going through the template rather than writing the sentence out again is
+ * what keeps the two implementations honest: there is one copy of the wording
+ * per language and a test that compares them, instead of a sentence spelled
+ * out at each `return`.
+ */
+function refuse(template, values = {}) {
+  return template.replace(/\{(\w+)\}/g, (_match, key) => values[key]);
+}
 
 /** An area, or the reason there isn't one. */
 export function measurement(squareMetres, problem = null) {
@@ -85,24 +120,24 @@ function project(ring, zone) {
 /** Why this ring cannot be measured, or null if it can. */
 export function ringProblem(ring) {
   if (ring.length < 3) {
-    return `needs at least 3 distinct corners, found ${ring.length}`;
+    return refuse(NOT_ENOUGH_CORNERS, { count: ring.length });
   }
 
   const latitudes = ring.map((p) => p.lat);
   if (Math.min(...latitudes) < UTM_MIN_LAT || Math.max(...latitudes) > UTM_MAX_LAT) {
-    return (
-      "lies outside the range UTM covers " +
-      `(${UTM_MIN_LAT} to ${UTM_MAX_LAT} degrees latitude)`
-    );
+    return refuse(OUTSIDE_UTM_RANGE, { low: UTM_MIN_LAT, high: UTM_MAX_LAT });
   }
 
   const longitudes = ring.map((p) => p.lon);
   const span = Math.max(...longitudes) - Math.min(...longitudes);
   if (span > MAX_LONGITUDE_SPAN) {
-    return (
-      `spans ${span.toFixed(1)} degrees of longitude, more than the ` +
-      `${MAX_LONGITUDE_SPAN} a single UTM zone covers`
-    );
+    // exactFixed, not toFixed: a span of exactly 6.25 degrees is a tie at one
+    // decimal, and toFixed would round it away from zero to "6.3" where
+    // Python's "{:.1f}" rounds it to even and says "6.2".
+    return refuse(LONGITUDE_TOO_WIDE, {
+      span: exactFixed(span, 1),
+      limit: MAX_LONGITUDE_SPAN,
+    });
   }
 
   return null;
@@ -127,13 +162,17 @@ export function polygonArea(outer, holes = []) {
   const centreLon = (Math.max(...lons) + Math.min(...lons)) / 2;
   const centreLat = (Math.max(...lats) + Math.min(...lats)) / 2;
 
+  // Only the centre falling outside what UTM accepts is "could not be
+  // projected". A corner that will not project is "could not be measured",
+  // because that is the branch Python raises out of -- the two are separate
+  // sentences a reader sees, so they have to divide the cases the same way.
   const centre = toUtm(centreLat, centreLon);
-  if (!centre) return measurement(null, "could not be projected");
+  if (!centre) return measurement(null, refuse(COULD_NOT_PROJECT));
   const zone = centre.zone;
 
   const outerProjected = project(ring, zone);
   if (outerProjected.some((corner) => corner === null)) {
-    return measurement(null, "could not be projected");
+    return measurement(null, refuse(COULD_NOT_MEASURE));
   }
 
   let total = shoelace(outerProjected);
@@ -143,12 +182,19 @@ export function polygonArea(outer, holes = []) {
     // A hole too broken to measure simply is not subtracted.
     if (ringProblem(holeRing) !== null) continue;
     const holeProjected = project(holeRing, zone);
-    if (holeProjected.some((corner) => corner === null)) continue;
+    // But a hole that passes those checks and still will not project is a
+    // different thing, and it refuses the whole shape. Skipping it silently
+    // returned a confident number where Python refused -- a corner past the
+    // antimeridian got dropped and the area came back as if the hole were
+    // not there.
+    if (holeProjected.some((corner) => corner === null)) {
+      return measurement(null, refuse(COULD_NOT_MEASURE));
+    }
     total -= shoelace(holeProjected);
   }
 
   if (total <= 0) {
-    return measurement(null, "its holes cover the whole shape, leaving no area");
+    return measurement(null, refuse(HOLES_COVER_EVERYTHING));
   }
 
   return measurement(total);

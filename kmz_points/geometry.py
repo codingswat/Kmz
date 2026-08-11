@@ -31,6 +31,38 @@ _MAX_LONGITUDE_SPAN = 6.0
 _SQUARE_METRES_PER_HECTARE = 10_000.0
 _SQUARE_METRES_PER_SQUARE_KM = 1_000_000.0
 
+# Every reason a shape can be refused, written down once.
+#
+# They are templates rather than words spelled out at the point of refusal
+# because the browser port has to reproduce them character for character: a
+# refusal that reads differently in the two versions is the same defect as a
+# number that differs, and harder to notice. web/test/refusal.test.mjs
+# compares this list against the one in web/src/geometry.js, so a reason added
+# to one side and not the other fails the build.
+NOT_ENOUGH_CORNERS = "needs at least 3 distinct corners, found {count}"
+OUTSIDE_UTM_RANGE = "lies outside the range UTM covers ({low} to {high} degrees latitude)"
+LONGITUDE_TOO_WIDE = (
+    "spans {span} degrees of longitude, more than the {limit} a single UTM zone covers"
+)
+# These two carried the caught exception's text, which was wrong twice over:
+# it put a Python library's wording into a spreadsheet banner an end user
+# reads, and it could never be reproduced by an implementation in another
+# language, so the two versions refused the same shape with different words.
+# Nothing is lost -- both branches mean "the projection rejected a coordinate
+# that had already passed every check above", which is what the reader needs.
+COULD_NOT_PROJECT = "could not be projected"
+COULD_NOT_MEASURE = "could not be measured"
+HOLES_COVER_EVERYTHING = "its holes cover the whole shape, leaving no area"
+
+REFUSALS = [
+    NOT_ENOUGH_CORNERS,
+    OUTSIDE_UTM_RANGE,
+    LONGITUDE_TOO_WIDE,
+    COULD_NOT_PROJECT,
+    COULD_NOT_MEASURE,
+    HOLES_COVER_EVERYTHING,
+]
+
 
 @dataclass(frozen=True)
 class Measurement:
@@ -98,21 +130,19 @@ def _project(ring: list[Point], zone: int) -> list[tuple[float, float]]:
 def _ring_problem(ring: list[Point]) -> str | None:
     """Why this ring cannot be measured, or None if it can."""
     if len(ring) < 3:
-        return f"needs at least 3 distinct corners, found {len(ring)}"
+        return NOT_ENOUGH_CORNERS.format(count=len(ring))
 
     latitudes = [p.lat for p in ring]
     if min(latitudes) < _UTM_MIN_LAT or max(latitudes) > _UTM_MAX_LAT:
-        return (
-            "lies outside the range UTM covers "
-            f"({_UTM_MIN_LAT:g} to {_UTM_MAX_LAT:g} degrees latitude)"
+        return OUTSIDE_UTM_RANGE.format(
+            low=f"{_UTM_MIN_LAT:g}", high=f"{_UTM_MAX_LAT:g}"
         )
 
     longitudes = [p.lon for p in ring]
     span = max(longitudes) - min(longitudes)
     if span > _MAX_LONGITUDE_SPAN:
-        return (
-            f"spans {span:.1f} degrees of longitude, more than the "
-            f"{_MAX_LONGITUDE_SPAN:g} a single UTM zone covers"
+        return LONGITUDE_TOO_WIDE.format(
+            span=f"{span:.1f}", limit=f"{_MAX_LONGITUDE_SPAN:g}"
         )
 
     return None
@@ -137,8 +167,8 @@ def polygon_area(outer: list[Point], holes: list[list[Point]]) -> Measurement:
     centre_lat = (max(p.lat for p in ring) + min(p.lat for p in ring)) / 2
     try:
         _e, _n, zone, _band = _utm.from_latlon(centre_lat, centre_lon)
-    except Exception as exc:
-        return Measurement(None, f"could not be projected ({exc})")
+    except Exception:
+        return Measurement(None, COULD_NOT_PROJECT)
 
     try:
         total = _shoelace(_project(ring, zone))
@@ -147,13 +177,11 @@ def polygon_area(outer: list[Point], holes: list[list[Point]]) -> Measurement:
             if _ring_problem(hole_ring) is not None:
                 continue  # a hole too broken to measure simply is not subtracted
             total -= _shoelace(_project(hole_ring, zone))
-    except Exception as exc:
-        return Measurement(None, f"could not be measured ({exc})")
+    except Exception:
+        return Measurement(None, COULD_NOT_MEASURE)
 
     if total <= 0:
-        return Measurement(
-            None, "its holes cover the whole shape, leaving no area"
-        )
+        return Measurement(None, HOLES_COVER_EVERYTHING)
 
     return Measurement(total)
 

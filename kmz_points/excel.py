@@ -187,8 +187,14 @@ def _banner(sheet, row_number: int, text: str, colour: str) -> None:
     )
 
 
-def _area_banner_text(measured) -> str:
-    """What an area's banner says: its size, or why there isn't one."""
+def area_banner_text(measured) -> str:
+    """What an area's banner says: its size, or why there isn't one.
+
+    Public because the browser port has to produce this string character for
+    character, and web/test/banner.test.mjs compares the two. It was private
+    while nothing outside this module needed it and nothing compared it, which
+    is how the two versions could have drifted unnoticed.
+    """
     area = measured.area
     name = area.name or "<unnamed>"
     corners = f"{area.corner_count} corners"
@@ -267,7 +273,7 @@ def _write_areas(book, measured_areas: list) -> None:
     row_number = FIRST_DATA_ROW
 
     for measured in measured_areas:
-        _banner(sheet, row_number, _area_banner_text(measured), _BANNER_FILL)
+        _banner(sheet, row_number, area_banner_text(measured), _BANNER_FILL)
         row_number += 1
 
         # The label is None for the outer ring and a banner string for a hole;

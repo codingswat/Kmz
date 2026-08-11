@@ -81,9 +81,44 @@ regenerated from the Python implementation each time rather than committed, so
 a drift between the two fails the build instead of being checked against a
 stale reference.
 
-One gap to be aware of: `src/kml.js` needs a DOM, so it is not covered by
-these tests. It is checked in a real browser instead, and everything
-downstream of it — geometry, the table, the workbook — is covered here.
+### The one place a test is weaker than it looks
+
+`src/kml.js` needs a DOM and Node has none, and this project has no
+`package.json` and no `node_modules` on purpose. `test/kml.test.mjs` runs it
+against `test/dom-shim.mjs`, a hand-written XML reader — and a much smaller
+HTML one — sufficient for the three sample documents and nothing beyond them.
+
+That is worth being precise about, because it is easy to over-read:
+
+- It **does** check `kml.js` against Python: which elements it walks, how it
+  matches a local name, what it counts as skipped, how it pairs a Polygon's
+  outer ring with its holes, and how it reduces a CDATA description to plain
+  text. That is the hand-maintained port logic, and it had no coverage at all
+  before.
+- It **does not** check that a browser's DOM behaves like the shim. It
+  implements no HTML implied end tags, no namespace URIs, no DTDs, and no CSS
+  selectors beyond bare tag names. Anything outside that it throws on rather
+  than quietly returning something plausible.
+
+So the browser run remains the authority for "`kml.js` works in a browser".
+The shim answers the different question of whether `kml.js` agrees with
+`kml_parser.py`, which nothing was asking before.
+
+### Known coordinate gaps
+
+Three places `src/convert.js` does not match Python. All three are boundaries
+the 410-coordinate sweep misses, all three are pinned by name in
+`test/cross-check.test.mjs`, and none is fixed yet:
+
+| Input | Python | Browser |
+|---|---|---|
+| latitude exactly 84 | applies the Svalbard zone exception | does not (`< 84`, not `<= 84`) |
+| longitude exactly 180 | folds to −180, zone 1 | zone 61, which does not exist |
+| latitude outside −80…84 | an MGRS reference, via the polar UPS grid | nothing; UTM only |
+
+The first two are one-line fixes; the third needs UPS implementing. The
+projected metres are right in all three cases — it is the printed zone, and
+the polar grid reference, that differ.
 
 ## Does it agree with the Python?
 
@@ -92,9 +127,13 @@ Yes, checked at every level rather than assumed:
 | Check | Result |
 |---|---|
 | UTM and MGRS, 410 coordinates | 0 mismatches, exact to the metre |
-| Area measurement, 132 shapes | 0 mismatches (worst 0.0007 m², float noise) |
+| Area measurement, 136 shapes | 0 mismatches (worst 0.0007 m², float noise) |
+| Refusal wording, all 6 reasons | identical, and each one reached by a shape |
+| The 23 columns | header, kind, number format and band all identical |
+| Table rows, 64 points | every cell identical |
+| Area banner text, 136 + 23 areas | identical, including the numbers |
 | KMZ extraction | byte-identical to Python's `zipfile` |
-| KML parsing, real samples | points, areas and skipped counts all match |
+| KML parsing, real samples | points, areas, descriptions and skipped counts all match |
 | **The finished workbook** | **410 cells, 0 mismatches** — value, type and number format, plus sheets, merges, widths and freeze panes |
 
 The last row is the one that matters: the same three sample files through both
@@ -115,12 +154,14 @@ alignment are deliberately outside that; see `kmz_points/workbook_facts.py`.
 | `src/unzip.js` | ZIP reader, with the decompression-bomb cap |
 | `src/geometry.js` | Area measurement |
 | `src/convert.js` | Coordinate conversions, including UTM and MGRS |
-| `src/table.js` | The 23 columns and four bands |
+| `src/table.js` | The 23 columns and five bands |
 | `src/workbook.js` | The banded layout, banners and sheets |
 | `src/xlsx.js` | Workbook writer: styles, merges, sheets |
 | `src/zip.js` | Minimal ZIP writer |
+| `test/dom-shim.mjs` | Just enough DOM to run `kml.js` in Node — read its header |
 | `spike/` | The cross-checks, kept as runnable evidence |
 
-Everything except `kml.js` runs unchanged in Node, which is what lets most of
-the cross-checking happen offline. `kml.js` needs a DOM, so its check runs in
-a browser.
+Everything except `kml.js` runs unchanged in Node, which is what lets the
+cross-checking happen offline. `kml.js` needs a DOM, so it runs against the
+shim above for its agreement with Python and in a real browser for everything
+else.

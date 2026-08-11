@@ -68,12 +68,11 @@ test("area measurement agrees with Python on every shape", () => {
 
     if (item.squareMetres === null) {
       assert.equal(result.squareMetres, null, `${item.name} should not be measurable`);
-      // The reasons must match too, or the two would refuse different things.
-      assert.equal(
-        (result.problem || "").slice(0, 30),
-        (item.problem || "").slice(0, 30),
-        `${item.name}: different reason`,
-      );
+      // The whole reason, not its first thirty characters. Comparing a prefix
+      // hid a live divergence for as long as it existed: Python interpolated
+      // the caught exception's text and the browser did not, and every one of
+      // those strings agrees for far longer than thirty characters.
+      assert.equal(result.problem, item.problem, `${item.name}: different reason`);
       continue;
     }
 
@@ -84,6 +83,49 @@ test("area measurement agrees with Python on every shape", () => {
     const relative = Math.abs(result.squareMetres - item.squareMetres) / item.squareMetres;
     assert.ok(relative < 1e-6, `${item.name}: ${result.squareMetres} vs ${item.squareMetres}`);
   }
+});
+
+/**
+ * Three places the browser's coordinates are known NOT to match Python's.
+ *
+ * These are defects, not decisions, and none of them is fixed here: they live
+ * in src/convert.js, they change numbers a workbook shows, and that is a
+ * change to make deliberately with its own sweep behind it rather than as a
+ * side effect of adding tests. They are written down instead, so that they
+ * are a known quantity rather than a surprise, so that they cannot quietly
+ * get worse, and so that whoever fixes one is told to delete the pin.
+ *
+ * The 410 coordinates above miss all three because every one of them is a
+ * boundary: latitude exactly 84, longitude exactly 180, and latitude past the
+ * band UTM covers at all.
+ */
+test("the known coordinate gaps are still exactly these three", () => {
+  // 1. The Svalbard zone exception. The utm package applies it up to and
+  //    INCLUDING 84 degrees; convert.js stops just below. Only longitudes in
+  //    the exception's own ranges show it -- elsewhere the regular grid
+  //    happens to give the same answer.
+  assert.equal(toUtm(84, 20).zone, 34, "the Svalbard upper bound was fixed");
+  assert.equal(
+    fixtures.coordinates.every((item) => item.lat !== 84),
+    true,
+    "a coordinate case now sits on 84, so this belongs in the main check",
+  );
+
+  // 2. Longitude exactly 180. The utm package folds it to -180 and returns
+  //    zone 1; convert.js computes zone 61, which does not exist. The
+  //    projected metres agree either way, so only the printed zone is wrong.
+  assert.equal(toUtm(0, 180).zone, 61, "the antimeridian zone was fixed");
+  assert.equal(toUtm(0, -180).zone, 1);
+
+  // 3. MGRS outside UTM's latitude band. Python's C library falls back to the
+  //    polar UPS grid; convert.js implements UTM only and gives up. This is
+  //    the one the table row check has to excuse.
+  assert.equal(toUtm(85, 20), null);
+  assert.equal(toMgrs(85, 20), null, "polar MGRS arrived; the table check can stop excusing it");
+  assert.equal(toMgrs(-85, 20), null);
+  // Right up to the edge the two still agree, which is what makes the gap a
+  // gap rather than a general failure.
+  assert.equal(toMgrs(83.9, 20), "33XWP5924519502");
 });
 
 test("a KMZ extracts to exactly the bytes Python extracts", async () => {

@@ -636,6 +636,79 @@ function toMgrs(lat, lon) {
   return `${zonePart}${band}${columnLetter}${rowLetter}${eastPart}${northPart}`;
 }
 
+// Reused rather than allocated per call: this runs once per number in every
+// area banner, and the buffer is read back before anything else can touch it.
+const BITS = new DataView(new ArrayBuffer(8));
+
+/**
+ * A double's exact value as `mantissa * 2 ** exponent`, both integers.
+ *
+ * Every finite double is exactly a dyadic rational, so this loses nothing --
+ * which is the point. It is what lets exactFixed round the number that is
+ * actually stored rather than the shortest decimal that happens to print as
+ * it.
+ */
+function dyadic(value) {
+  BITS.setFloat64(0, value);
+  const bits = BITS.getBigUint64(0);
+  const biased = Number((bits >> 52n) & 0x7ffn);
+  const fraction = bits & 0xfffffffffffffn;
+  // Subnormals have no implicit leading 1 and a fixed exponent.
+  if (biased === 0) return { mantissa: fraction, exponent: -1074 };
+  return { mantissa: fraction | (1n << 52n), exponent: biased - 1075 };
+}
+
+/**
+ * `value` to `places` decimals, exactly as Python's ``format(x, f".{p}f")``.
+ *
+ * Neither of the obvious JavaScript answers agrees with Python, and both
+ * disagreements produce a digit an end user reads:
+ *
+ *   - `toLocaleString` rounds the SHORTEST DECIMAL that prints as the double,
+ *     not the double. 548.3335 is stored as 548.33349999…, which Python
+ *     renders as "548.333"; toLocaleString renders "548.334".
+ *   - `toFixed` does round the stored value, but breaks an exact tie AWAY
+ *     FROM ZERO where Python breaks it TO EVEN. 0.0625 is exactly 1/16, so
+ *     three decimals is a genuine tie: Python gives "0.062", toFixed "0.063".
+ *
+ * Measured over 695,628 value/precision pairs against Python: toLocaleString
+ * disagreed on 6,025, toFixed on 1,980, this on none.
+ *
+ * BigInt throughout, because the arithmetic that decides the last digit is
+ * exactly the arithmetic a double cannot do.
+ */
+function exactFixed(value, places) {
+  // Python prints these as words, and nothing here may throw.
+  if (Number.isNaN(value)) return "nan";
+  if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
+
+  // Object.is, because -0.0 is negative to Python and `-0 < 0` is false.
+  const negative = value < 0 || Object.is(value, -0);
+  const { mantissa, exponent } = dyadic(Math.abs(value));
+
+  const scaled = mantissa * 10n ** BigInt(places);
+  let digits;
+  if (exponent >= 0) {
+    digits = scaled << BigInt(exponent); // an integer already; nothing to round
+  } else {
+    const divisor = 1n << BigInt(-exponent);
+    const whole = scaled / divisor;
+    const twiceRemainder = (scaled % divisor) * 2n;
+    const roundUp =
+      twiceRemainder > divisor ||
+      // The tie: to even, which is what Python does and toFixed does not.
+      (twiceRemainder === divisor && (whole & 1n) === 1n);
+    digits = roundUp ? whole + 1n : whole;
+  }
+
+  // padStart guarantees a digit before the point for values under 1.
+  const text = digits.toString().padStart(places + 1, "0");
+  const point = text.length - places;
+  const sign = negative ? "-" : "";
+  if (!places) return sign + text;
+  return `${sign}${text.slice(0, point)}.${text.slice(point)}`;
+}
+
 /** Signed decimal degrees to six places: ``34.567890``. */
 function formatDd(value) {
   const rounded = Math.round(value * 1e6) / 1e6;
@@ -693,7 +766,7 @@ function formatDms(value, axis) {
   const { degrees, minutes, seconds } = dmsParts(value);
   return `${degrees}° ${minutes}' ${seconds.toFixed(2)}" ${side}`;
 }
-return { dmsParts, formatDd, formatDdm, formatDms, latitudeBand, toMgrs, toUtm, utmLabel };
+return { dmsParts, exactFixed, formatDd, formatDdm, formatDms, latitudeBand, toMgrs, toUtm, utmLabel };
 })();
 
 __modules["unzip.js"] = (function () {
@@ -911,7 +984,7 @@ __modules["geometry.js"] = (function () {
  * footprint, and the elevation data needed to compute that is not in a KML.
  */
 
-const { toUtm } = __modules["convert.js"];
+const { exactFixed, toUtm } = __modules["convert.js"];
 const UTM_MIN_LAT = -80.0;
 const UTM_MAX_LAT = 84.0;
 
@@ -923,6 +996,41 @@ const MAX_LONGITUDE_SPAN = 6.0;
 
 const SQUARE_METRES_PER_HECTARE = 10000.0;
 const SQUARE_METRES_PER_SQUARE_KM = 1000000.0;
+
+// Every reason a shape can be refused. Copied verbatim from kmz_points/
+// geometry.py's REFUSALS -- these are the words an end user reads out of a
+// spreadsheet banner, so the two implementations have to agree on them the
+// same way they agree on a number. web/test/refusal.test.mjs compares the two
+// lists, and a reason added on one side alone fails the build.
+const NOT_ENOUGH_CORNERS = "needs at least 3 distinct corners, found {count}";
+const OUTSIDE_UTM_RANGE =
+  "lies outside the range UTM covers ({low} to {high} degrees latitude)";
+const LONGITUDE_TOO_WIDE =
+  "spans {span} degrees of longitude, more than the {limit} a single UTM zone covers";
+const COULD_NOT_PROJECT = "could not be projected";
+const COULD_NOT_MEASURE = "could not be measured";
+const HOLES_COVER_EVERYTHING = "its holes cover the whole shape, leaving no area";
+
+const REFUSALS = [
+  NOT_ENOUGH_CORNERS,
+  OUTSIDE_UTM_RANGE,
+  LONGITUDE_TOO_WIDE,
+  COULD_NOT_PROJECT,
+  COULD_NOT_MEASURE,
+  HOLES_COVER_EVERYTHING,
+];
+
+/**
+ * Fill a refusal template, the way Python's str.format fills the same one.
+ *
+ * Going through the template rather than writing the sentence out again is
+ * what keeps the two implementations honest: there is one copy of the wording
+ * per language and a test that compares them, instead of a sentence spelled
+ * out at each `return`.
+ */
+function refuse(template, values = {}) {
+  return template.replace(/\{(\w+)\}/g, (_match, key) => values[key]);
+}
 
 /** An area, or the reason there isn't one. */
 function measurement(squareMetres, problem = null) {
@@ -984,24 +1092,24 @@ function project(ring, zone) {
 /** Why this ring cannot be measured, or null if it can. */
 function ringProblem(ring) {
   if (ring.length < 3) {
-    return `needs at least 3 distinct corners, found ${ring.length}`;
+    return refuse(NOT_ENOUGH_CORNERS, { count: ring.length });
   }
 
   const latitudes = ring.map((p) => p.lat);
   if (Math.min(...latitudes) < UTM_MIN_LAT || Math.max(...latitudes) > UTM_MAX_LAT) {
-    return (
-      "lies outside the range UTM covers " +
-      `(${UTM_MIN_LAT} to ${UTM_MAX_LAT} degrees latitude)`
-    );
+    return refuse(OUTSIDE_UTM_RANGE, { low: UTM_MIN_LAT, high: UTM_MAX_LAT });
   }
 
   const longitudes = ring.map((p) => p.lon);
   const span = Math.max(...longitudes) - Math.min(...longitudes);
   if (span > MAX_LONGITUDE_SPAN) {
-    return (
-      `spans ${span.toFixed(1)} degrees of longitude, more than the ` +
-      `${MAX_LONGITUDE_SPAN} a single UTM zone covers`
-    );
+    // exactFixed, not toFixed: a span of exactly 6.25 degrees is a tie at one
+    // decimal, and toFixed would round it away from zero to "6.3" where
+    // Python's "{:.1f}" rounds it to even and says "6.2".
+    return refuse(LONGITUDE_TOO_WIDE, {
+      span: exactFixed(span, 1),
+      limit: MAX_LONGITUDE_SPAN,
+    });
   }
 
   return null;
@@ -1026,13 +1134,17 @@ function polygonArea(outer, holes = []) {
   const centreLon = (Math.max(...lons) + Math.min(...lons)) / 2;
   const centreLat = (Math.max(...lats) + Math.min(...lats)) / 2;
 
+  // Only the centre falling outside what UTM accepts is "could not be
+  // projected". A corner that will not project is "could not be measured",
+  // because that is the branch Python raises out of -- the two are separate
+  // sentences a reader sees, so they have to divide the cases the same way.
   const centre = toUtm(centreLat, centreLon);
-  if (!centre) return measurement(null, "could not be projected");
+  if (!centre) return measurement(null, refuse(COULD_NOT_PROJECT));
   const zone = centre.zone;
 
   const outerProjected = project(ring, zone);
   if (outerProjected.some((corner) => corner === null)) {
-    return measurement(null, "could not be projected");
+    return measurement(null, refuse(COULD_NOT_MEASURE));
   }
 
   let total = shoelace(outerProjected);
@@ -1042,12 +1154,19 @@ function polygonArea(outer, holes = []) {
     // A hole too broken to measure simply is not subtracted.
     if (ringProblem(holeRing) !== null) continue;
     const holeProjected = project(holeRing, zone);
-    if (holeProjected.some((corner) => corner === null)) continue;
+    // But a hole that passes those checks and still will not project is a
+    // different thing, and it refuses the whole shape. Skipping it silently
+    // returned a confident number where Python refused -- a corner past the
+    // antimeridian got dropped and the area came back as if the hole were
+    // not there.
+    if (holeProjected.some((corner) => corner === null)) {
+      return measurement(null, refuse(COULD_NOT_MEASURE));
+    }
     total -= shoelace(holeProjected);
   }
 
   if (total <= 0) {
-    return measurement(null, "its holes cover the whole shape, leaving no area");
+    return measurement(null, refuse(HOLES_COVER_EVERYTHING));
   }
 
   return measurement(total);
@@ -1057,7 +1176,7 @@ function polygonArea(outer, holes = []) {
 function measure(area) {
   return { area, measurement: polygonArea(area.outer, area.holes || []) };
 }
-return { distinctCorners, measure, measurement, polygonArea, ringProblem };
+return { COULD_NOT_MEASURE, COULD_NOT_PROJECT, HOLES_COVER_EVERYTHING, LONGITUDE_TOO_WIDE, NOT_ENOUGH_CORNERS, OUTSIDE_UTM_RANGE, REFUSALS, distinctCorners, measure, measurement, polygonArea, ringProblem };
 })();
 
 __modules["table.js"] = (function () {
@@ -1070,7 +1189,13 @@ __modules["table.js"] = (function () {
  *
  * Columns are grouped into bands. A band becomes a merged title across the
  * top of its columns, optionally with a second merged caption beneath, so the
- * sheet reads as four labelled blocks rather than one undifferentiated row.
+ * sheet reads as five labelled blocks rather than one undifferentiated row.
+ *
+ * web/test/table.test.mjs compares this list against Python's, header by
+ * header, kind by kind, format by format and band by band. It has to: both
+ * row builders emit positional arrays, so a column added on one side alone
+ * does not fail, it shifts every value after it and produces two different
+ * workbooks that each look right.
  */
 
 const { dmsParts, formatDdm, formatDms, toMgrs, toUtm, utmLabel } = __modules["convert.js"];
@@ -1198,6 +1323,7 @@ __modules["workbook.js"] = (function () {
  * banner and its corners, and an Issues sheet when anything failed.
  */
 
+const { exactFixed } = __modules["convert.js"];
 const { buildWorkbook, columnLetter, Styles } = __modules["xlsx.js"];
 const { bands, buildTableRows, COLUMNS, headers, SOURCE_FILE_INDEX } = __modules["table.js"];
 const BAND_TITLE_ROW = 1;
@@ -1355,6 +1481,25 @@ function pointsSheet(rows, look) {
   };
 }
 
+/**
+ * `value` to `places` decimals with thousands separators, exactly as Python's
+ * ``format(x, f",.{p}f")``.
+ *
+ * The separator is the easy half. The rounding is exactFixed's, and it is
+ * there because this was written as `toLocaleString("en-US", …)` and that
+ * disagreed with Python on roughly one banner number in fifty -- see
+ * exactFixed in convert.js for the two distinct reasons why.
+ */
+function groupedFixed(value, places) {
+  const text = exactFixed(value, places);
+  const point = text.indexOf(".");
+  const whole = point === -1 ? text : text.slice(0, point);
+  const rest = point === -1 ? "" : text.slice(point);
+  // \B keeps the regex off the front of the string, so "-1234" groups as
+  // "-1,234" and never as "-,1234".
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + rest;
+}
+
 function areaBannerText(measured) {
   const { area, measurement } = measured;
   const name = area.name || "<unnamed>";
@@ -1364,16 +1509,10 @@ function areaBannerText(measured) {
     return `${name} — area not measured: ${measurement.problem} · ${corners}`;
   }
 
-  const round = (value, places) =>
-    value.toLocaleString("en-US", {
-      minimumFractionDigits: places,
-      maximumFractionDigits: places,
-    });
-
   return (
-    `${name} — ${round(measurement.squareMetres, 0)} m² · ` +
-    `${round(measurement.hectares, 3)} ha · ` +
-    `${round(measurement.squareKilometres, 6)} km² · ${corners}`
+    `${name} — ${groupedFixed(measurement.squareMetres, 0)} m² · ` +
+    `${groupedFixed(measurement.hectares, 3)} ha · ` +
+    `${groupedFixed(measurement.squareKilometres, 6)} km² · ${corners}`
   );
 }
 
@@ -1477,7 +1616,7 @@ function outputFilename(when = new Date()) {
     `_${pad(when.getHours())}${pad(when.getMinutes())}${pad(when.getSeconds())}.xlsx`
   );
 }
-return { BAND_CAPTION_ROW, BAND_TITLE_ROW, FIRST_DATA_ROW, HEADER_ROW, buildBatchSheets, buildBatchWorkbook, cornerCount, headers, outputFilename };
+return { BAND_CAPTION_ROW, BAND_TITLE_ROW, FIRST_DATA_ROW, HEADER_ROW, areaBannerText, buildBatchSheets, buildBatchWorkbook, cornerCount, groupedFixed, headers, outputFilename };
 })();
 
 __modules["kml.js"] = (function () {

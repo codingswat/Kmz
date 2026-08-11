@@ -7,7 +7,13 @@
  *
  * Columns are grouped into bands. A band becomes a merged title across the
  * top of its columns, optionally with a second merged caption beneath, so the
- * sheet reads as four labelled blocks rather than one undifferentiated row.
+ * sheet reads as five labelled blocks rather than one undifferentiated row.
+ *
+ * web/test/table.test.mjs compares this list against Python's, header by
+ * header, kind by kind, format by format and band by band. It has to: both
+ * row builders emit positional arrays, so a column added on one side alone
+ * does not fail, it shifts every value after it and produces two different
+ * workbooks that each look right.
  */
 
 import { dmsParts, formatDdm, formatDms, toMgrs, toUtm, utmLabel } from "./convert.js";
