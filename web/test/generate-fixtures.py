@@ -40,7 +40,6 @@ from kmz_points.samples import write_samples  # noqa: E402
 from kmz_points.table import COLUMNS, build_table_rows  # noqa: E402
 from kmz_points.workbook_facts import workbook_facts  # noqa: E402
 
-
 # The awkward places, kept apart from the random cover because both this
 # module and table_points() need to know where they stop. A coordinate that
 # only misbehaves exactly ON a boundary will never be found by 400 random
