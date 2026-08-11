@@ -501,7 +501,7 @@ __modules["convert.js"] = (function () {
  * total: out-of-range input yields null rather than throwing, so one bad
  * point can never abort a batch.
  *
- * UTM and MGRS are implemented here rather than pulled from a library
+ * UTM, UPS and MGRS are implemented here rather than pulled from a library
  * because the Python side gets MGRS from a compiled C library, which has no
  * browser equivalent. The formulas are the standard ones and the results are
  * checked against the Python implementation, coordinate by coordinate.
@@ -516,6 +516,8 @@ __modules["convert.js"] = (function () {
 const A = 6378137.0;
 const F = 1 / 298.257223563;
 const E2 = F * (2 - F);
+// The unsquared eccentricity, which only the polar projection below needs.
+const E = Math.sqrt(E2);
 const E_PRIME2 = E2 / (1 - E2);
 const K0 = 0.9996;
 
@@ -639,13 +641,22 @@ const ROW_LETTERS = ["ABCDEFGHJKLMNPQRSTUV", "FGHJKLMNPQRSTUVABCDE"];
 /**
  * An MGRS grid reference at 1 m precision, e.g. ``37SDU1959425474``, or null
  * where it cannot be computed.
+ *
+ * Two grids meet here. Between 80 degrees south and 84 north the reference is
+ * built on UTM and opens with a zone NUMBER; outside that band UTM does not
+ * reach, and the polar UPS grid takes over with a zone LETTER in its place.
+ * Python gets both from one C library call, which is why the split is
+ * invisible there and has to be spelled out here.
  */
 function toMgrs(lat, lon) {
+  if (!inRange(lat, lon)) return null;
+  // toUtm covers exactly -80..84, so falling through to UPS on a null
+  // reproduces the C library's own dispatch without restating the bounds.
   const point = toUtm(lat, lon);
-  if (!point) return null;
+  return point ? utmReference(point) : upsReference(lat, lon);
+}
 
-  const { zone, band, easting, northing } = point;
-
+function utmReference({ zone, band, easting, northing }) {
   const columnSet = (zone - 1) % 3;
   const columnIndex = Math.floor(easting / 100000) - 1;
   if (columnIndex < 0 || columnIndex > 7) return null;
@@ -662,6 +673,134 @@ function toMgrs(lat, lon) {
   // are: "02CNS...", not "2CNS...".
   const zonePart = String(zone).padStart(2, "0");
   return `${zonePart}${band}${columnLetter}${rowLetter}${eastPart}${northPart}`;
+}
+
+/**
+ * UPS -- Universal Polar Stereographic -- is the grid the two caps use.
+ *
+ * UTM wraps a cylinder round the equator. A cylinder touches the poles
+ * nowhere, so UTM is cut off at 84 north and 80 south, and past those MGRS
+ * switches to a plane laid flat against each pole instead. The origin is the
+ * pole itself, shifted 2,000,000 m east and north so that no coordinate goes
+ * negative.
+ *
+ * The scale comes from the parallel the projection is exact along, 81.114528
+ * degrees, and NOT from the equivalent-sounding statement that the scale at
+ * the pole is 0.994. Those two disagree by fourteen parts in a thousand
+ * million, which is under 2 cm at the outer edge of a cap and reads as
+ * nothing at all -- right up until you remember that the reference
+ * implementation TRUNCATES to whole metres rather than rounding. A coordinate
+ * that lands inside that 2 cm below a metre boundary then comes out a whole
+ * metre away, and the sweep in the tests contains one.
+ */
+const UPS_TRUE_SCALE = 81.114528 * RAD;
+const UPS_ORIGIN = 2000000.0;
+
+/** The ellipsoid correction ((1 - e sin f) / (1 + e sin f)) ** (e / 2). */
+function polarFactor(sinLat) {
+  const eSin = E * sinLat;
+  return ((1 - eSin) / (1 + eSin)) ** (E / 2);
+}
+
+// Both are fixed by that parallel alone, so both are computed once: the
+// radius it projects to, and the shape factor at it.
+const UPS_RADIUS =
+  (A * Math.cos(UPS_TRUE_SCALE)) / Math.sqrt(1 - (E * Math.sin(UPS_TRUE_SCALE)) ** 2);
+const UPS_SHAPE =
+  Math.tan(Math.PI / 4 - UPS_TRUE_SCALE / 2) / polarFactor(Math.sin(UPS_TRUE_SCALE));
+
+/**
+ * Project to UPS. Returns metres east and north of the cap's false origin.
+ *
+ * The southern cap is computed by mirroring the point into the northern one
+ * and mirroring the answer back. That is how the reference implementation
+ * does it, and it keeps one set of formulas where two could drift apart.
+ */
+function toUps(lat, lon) {
+  // Within about a millimetre of the pole the projection collapses onto the
+  // origin, and the longitude stops meaning anything at all.
+  if (Math.abs(Math.abs(lat) - 90) * RAD < 1e-10) {
+    return { easting: UPS_ORIGIN, northing: UPS_ORIGIN };
+  }
+
+  const south = lat < 0;
+  const latRad = (south ? -lat : lat) * RAD;
+  // No folding needed: toMgrs has already refused anything outside -180..180,
+  // and mirroring the southern cap keeps it there.
+  const lonRad = (south ? -lon : lon) * RAD;
+
+  const t = Math.tan(Math.PI / 4 - latRad / 2) / polarFactor(Math.sin(latRad));
+  const radius = (UPS_RADIUS * t) / UPS_SHAPE;
+  const east = radius * Math.sin(lonRad);
+  const north = radius * Math.cos(lonRad);
+
+  return south
+    ? { easting: UPS_ORIGIN - east, northing: UPS_ORIGIN + north }
+    : { easting: UPS_ORIGIN + east, northing: UPS_ORIGIN - north };
+}
+
+/**
+ * The four polar zones, and the 100km square letters each of them uses.
+ *
+ * Which zone a point falls in is decided by its EASTING -- west or east of
+ * the 2,000,000 m origin -- and not by the sign of its longitude. Reading the
+ * easting is what the reference implementation does, and the two rules pick
+ * the same half everywhere except on the antimeridian, where a westward
+ * longitude projects onto the origin itself and so letters as eastern.
+ *
+ * Each zone letters its squares from its own false origin, which is why the
+ * offsets below differ. So do the column alphabets, and not as UTM's do: the
+ * eastern half of a cap drops D, E, I, M, N and O, the western half drops I,
+ * M, N, O, V and W, and the rows of both drop only I and O.
+ */
+const UPS_ROWS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const UPS_WEST_COLUMNS = "JKLPQRSTUXYZ";
+const UPS_EAST_COLUMNS = "ABCFGHJKLPQRSTUVWXYZ";
+
+const UPS_ZONES = {
+  north: {
+    west: { letter: "Y", columns: UPS_WEST_COLUMNS, easting: 800000, northing: 1300000 },
+    east: { letter: "Z", columns: UPS_EAST_COLUMNS, easting: 2000000, northing: 1300000 },
+  },
+  south: {
+    west: { letter: "A", columns: UPS_WEST_COLUMNS, easting: 800000, northing: 800000 },
+    east: { letter: "B", columns: UPS_EAST_COLUMNS, easting: 2000000, northing: 800000 },
+  },
+};
+
+function upsReference(lat, lon) {
+  const projected = toUps(lat, lon);
+  // Truncated to whole metres, and truncated BEFORE any letter is read off
+  // the result -- both as the reference implementation does, and as the UTM
+  // path above already does. A reading 60 cm past a metre mark still reports
+  // that metre rather than the next one.
+  //
+  // On the antimeridian this is exactly right for a reason worth knowing: the
+  // easting comes out a ten-billionth of a metre short of the 2,000,000 m
+  // line, because the sine of 180 degrees is not quite zero in binary, and a
+  // gap that small cannot be held next to a number that large. The
+  // subtraction lands on the line instead of below it, so the point letters
+  // as eastern rather than falling into the zone next door.
+  const easting = Math.floor(projected.easting);
+  const northing = Math.floor(projected.northing);
+
+  const zone =
+    UPS_ZONES[lat >= 0 ? "north" : "south"][easting >= UPS_ORIGIN ? "east" : "west"];
+
+  const columnIndex = Math.floor((easting - zone.easting) / 100000);
+  const rowIndex = Math.floor((northing - zone.northing) / 100000);
+  // Neither can happen at a latitude UPS is reached at -- the caps are far
+  // narrower than the alphabets. They are here because every function in this
+  // file is total, and an undefined letter would otherwise print as
+  // "undefined" in a workbook cell.
+  if (columnIndex < 0 || columnIndex >= zone.columns.length) return null;
+  if (rowIndex < 0 || rowIndex >= UPS_ROWS.length) return null;
+
+  const eastPart = String(easting % 100000).padStart(5, "0");
+  const northPart = String(northing % 100000).padStart(5, "0");
+  // No zone number: past the band there is none, and the leading letter is
+  // what takes its place.
+  return `${zone.letter}${zone.columns[columnIndex]}${UPS_ROWS[rowIndex]}${eastPart}${northPart}`;
 }
 
 // Reused rather than allocated per call: this runs once per number in every

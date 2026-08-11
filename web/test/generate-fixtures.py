@@ -60,6 +60,21 @@ AWKWARD_COORDINATES = [
     (84.0, -20.0),             # and a longitude where it does not apply
     (0.0, 180.0),              # ON the antimeridian, which folds to zone 1
     (-33.0, 180.0),            # the same fold, south, where northing is false
+    # The polar caps, past where UTM reaches, which MGRS covers with the UPS
+    # grid instead. Each cap is divided into two lettered zones by its EASTING
+    # rather than by the sign of its longitude. Those two rules pick the same
+    # half everywhere but the antimeridian, which projects onto the dividing
+    # line itself and so letters as eastern despite being a western longitude.
+    (84.5, 20.0),              # just past UTM's northern limit
+    (85.0, 20.0),
+    (85.0, -20.0),             # the western half of the northern cap
+    (85.0, 180.0),             # the antimeridian, which letters as eastern
+    (89.9, 20.0),
+    (90.0, 0.0),               # the north pole, where the projection collapses
+    (-80.1, 20.0),             # just past the southern limit
+    (-85.0, 20.0),
+    (-85.0, -20.0),            # the western half of the southern cap
+    (-90.0, 0.0),              # the south pole
 ]
 
 
@@ -70,6 +85,18 @@ def coordinate_cases():
     points += [
         (random.uniform(-79.5, 83.5), random.uniform(-179.9, 179.9))
         for _ in range(400)
+    ]
+    # The caps get random cover of their own. Without it the UPS grid is only
+    # ever checked at the ten places named above, while the band UTM covers
+    # gets 400 arbitrary ones -- and it is the arbitrary ones that catch a
+    # formula which happens to be right everywhere somebody thought to look.
+    points += [
+        (random.uniform(84.01, 90.0), random.uniform(-179.9, 179.9))
+        for _ in range(30)
+    ]
+    points += [
+        (random.uniform(-90.0, -80.01), random.uniform(-179.9, 179.9))
+        for _ in range(30)
     ]
 
     cases = []
@@ -295,9 +322,11 @@ def table_points(documents, coordinates):
     Three sources, each covering something the others cannot. The sample batch
     carries real names, descriptions, altitudes and source files. The
     coordinate cases carry the awkward geography -- the zone exceptions, the
-    antimeridian, whole-degree parts of zero -- which seven sample points do
-    not reach. The two polar points are the only way to exercise the columns
-    that stay empty because UTM is undefined there.
+    antimeridian, the polar caps, whole-degree parts of zero -- which seven
+    sample points do not reach. The two polar points put a NAMED row past
+    UTM's band, where the zone, easting and northing columns stay empty: the
+    coordinate cases reach those latitudes too now, but a failure that reads
+    "north pole" is easier to place than one that reads "case 37".
     """
     points = [
         Point(p["name"], p["description"], p["lon"], p["lat"], p["alt"], name)

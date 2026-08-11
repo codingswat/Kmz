@@ -103,8 +103,8 @@ test("the boundary coordinates agree with Python", () => {
 
   // The Svalbard exception runs up to and INCLUDING 84 degrees. Only
   // longitudes inside the exception's own ranges show it -- elsewhere the
-  // regular grid happens to give the same answer, which is why 410 random
-  // coordinates never caught this.
+  // regular grid happens to give the same answer, which is why hundreds of
+  // random coordinates never caught this.
   assert.equal(toUtm(84, 20).zone, 33);
   assert.equal(toUtm(84, 20).band, "X");
 
@@ -149,21 +149,43 @@ test("a forced zone across the antimeridian agrees with Python", () => {
 });
 
 /**
- * One gap is left, and it is pinned rather than fixed.
+ * The polar caps, which were the last gap and are a gap no longer.
  *
- * Pinned so it is a known quantity rather than a surprise, so it cannot
- * quietly get worse, and so whoever fixes it is told to delete the pin.
+ * This was pinned as a known defect for as long as convert.js implemented UTM
+ * and nothing else: past the band UTM covers, Python's C library falls back to
+ * the UPS grid and returned a reference where the browser returned nothing.
+ * The coordinate cases carry the caps now, so the sweep above covers this like
+ * anywhere else -- these assertions stay because a sweep tells you which
+ * coordinate disagreed and this tells you what was supposed to happen there.
  */
-test("the one remaining coordinate gap is still exactly this one", () => {
-  // MGRS outside UTM's latitude band. Python's C library falls back to the
-  // polar UPS grid; convert.js implements UTM only and gives up. Closing it
-  // means implementing UPS, which is a good deal more than a boundary fix.
-  // This is the gap the table row check has to excuse.
+test("the polar grid agrees with Python past UTM's band", () => {
+  // UTM really does stop, and both sides agree that it does. That is not the
+  // defect and never was -- the projected metres have no zone to belong to.
   assert.equal(toUtm(85, 20), null);
-  assert.equal(toMgrs(85, 20), null, "polar MGRS arrived; the table check can stop excusing it");
-  assert.equal(toMgrs(-85, 20), null);
-  // Right up to the edge the two still agree, which is what makes the gap a
-  // gap rather than a general failure.
+  assert.equal(toUtm(-85, 20), null);
+
+  // MGRS does not stop. In place of a zone number the reference opens with a
+  // zone LETTER: Y or Z above 84, A or B below -80.
+  assert.equal(toMgrs(85, 20), "ZBB8997778040");
+  assert.equal(toMgrs(-85, 20), "BBT8997721959");
+  assert.equal(toMgrs(84.5, 20), "ZCB0900225771");
+  assert.equal(toMgrs(-80.1, 20), "BFY7682635323");
+
+  // The western half of each cap. Which half a point lands in is decided by
+  // its easting rather than by the sign of its longitude, and the two rules
+  // part company only on the antimeridian -- where the easting projects onto
+  // the dividing line itself, so a western longitude letters as eastern.
+  assert.equal(toMgrs(85, -20), "YYB1002278040");
+  assert.equal(toMgrs(-85, -20), "AYT1002221959");
+  assert.equal(toMgrs(85, 180), "ZAN0000055457");
+
+  // The poles, where the projection collapses onto its origin and longitude
+  // stops meaning anything at all.
+  assert.equal(toMgrs(90, 0), "ZAH0000000000");
+  assert.equal(toMgrs(-90, 20), "BAN0000000000");
+
+  // And the UTM side of the boundary is untouched, which is what says the
+  // second grid was added beside the first rather than over it.
   assert.equal(toMgrs(83.9, 20), "33XWP5924519502");
 });
 

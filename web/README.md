@@ -21,10 +21,10 @@ it with the Python side's own `openpyxl`: merges, fills, fonts, number
 formats, column widths, the frozen pane and unicode all survive the trip.
 
 **MGRS.** Python gets it from a compiled C library with no browser
-equivalent, so `src/convert.js` implements UTM and MGRS directly. Checked
-against the Python implementation over 410 coordinates — the equator, both
-hemispheres, the Norway and Svalbard zone exceptions, the poles, the
-antimeridian, and 400 random points:
+equivalent, so `src/convert.js` implements UTM, UPS and MGRS directly. Checked
+against the Python implementation over 485 coordinates — the equator, both
+hemispheres, the Norway and Svalbard zone exceptions, the antimeridian, the
+two polar caps and the poles themselves, and 460 random points:
 
 ```
 zone+band mismatches : 0
@@ -104,27 +104,36 @@ So the browser run remains the authority for "`kml.js` works in a browser".
 The shim answers the different question of whether `kml.js` agrees with
 `kml_parser.py`, which nothing was asking before.
 
-### Known coordinate gap
+### Known coordinate gaps
 
-One place `src/convert.js` does not match Python. It is a boundary the
-410-coordinate sweep misses, and it is pinned by name in
-`test/cross-check.test.mjs`:
+None left. Three were found, every one of them a boundary a random sweep steps
+straight over, and all three are fixed and asserted positively in
+`test/cross-check.test.mjs` rather than pinned:
 
-| Input | Python | Browser |
+| Input | Was | Now |
 |---|---|---|
-| latitude outside −80…84 | an MGRS reference, via the polar UPS grid | nothing; UTM only |
+| latitude exactly 84 | missed the Svalbard zone exception | applies it, as the `utm` package does |
+| longitude exactly 180 | zone 61, which does not exist — there are 60 | folds to −180 and zone 1 |
+| latitude outside −80…84 | no MGRS reference at all | one from the polar UPS grid, as Python's C library returns |
 
-Closing it means implementing UPS, which is a good deal more than a boundary
-fix. The projected metres are right either way — it is the polar grid
-reference that is missing.
+The antimeridian needed the angle from the zone's central meridian wrapping
+into [−π, π] as well, or a point just the far side of it sat 357° from its own
+meridian and the series expansion returned billions of metres.
 
-Two others were found alongside it and have been fixed, both asserted
-positively now rather than pinned: a latitude of exactly 84 missed the
-Svalbard zone exception, and a longitude of exactly 180 produced zone 61,
-which does not exist — there are 60. The second needed the angle from the
-zone's central meridian wrapping into [−π, π] as well, or a point just the
-far side of the antimeridian sat 357° from its own meridian and the series
-expansion returned billions of metres.
+The polar one needed a whole second projection rather than a boundary fix.
+Past 84° north and −80° south MGRS abandons UTM for UPS: a plane laid flat
+against each pole, a different false origin, no zone number at all — a zone
+letter takes its place — and 100 km square letters that are not UTM's. Two
+details there are worth knowing before touching `src/convert.js`, because
+neither shows in the output until it is already wrong:
+
+- The reference implementation **truncates** to whole metres, and reads the
+  square letters off the truncated value. Rounding instead moves roughly half
+  of all references by a metre.
+- The scale must come from the 81.114528° parallel the projection is exact
+  along, and not from the equivalent-sounding pole scale factor of 0.994.
+  Those differ by under 2 cm, which matters only because of the truncation
+  above — and the sweep holds exactly one coordinate that tells them apart.
 
 ## Does it agree with the Python?
 
@@ -132,11 +141,11 @@ Yes, checked at every level rather than assumed:
 
 | Check | Result |
 |---|---|
-| UTM and MGRS, 410 coordinates | 0 mismatches, exact to the metre |
+| UTM, UPS and MGRS, 485 coordinates | 0 mismatches, exact to the metre |
 | Area measurement, 136 shapes | 0 mismatches (worst 0.0007 m², float noise) |
 | Refusal wording, all 6 reasons | identical, and each one reached by a shape |
 | The 23 columns | header, kind, number format and band all identical |
-| Table rows, 64 points | every cell identical |
+| Table rows, 85 points | every cell identical |
 | Area banner text, 136 + 23 areas | identical, including the numbers |
 | KMZ extraction | byte-identical to Python's `zipfile` |
 | KML parsing, real samples | points, areas, descriptions and skipped counts all match |

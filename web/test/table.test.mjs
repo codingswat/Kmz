@@ -127,7 +127,6 @@ test("the row builder produces the rows Python produces", () => {
 
   assert.equal(rows.length, expected.length, "a different number of rows");
 
-  let excused = 0;
   for (const [index, row] of rows.entries()) {
     const theirs = expected[index];
     assert.equal(
@@ -137,18 +136,6 @@ test("the row builder produces the rows Python produces", () => {
     );
 
     for (let column = 0; column < row.length; column += 1) {
-      // One known gap, older than this test and pinned by name in
-      // cross-check.test.mjs: past UTM's latitude band Python still returns
-      // an MGRS reference, because the C library it calls falls back to the
-      // polar UPS grid, and src/convert.js implements UTM only. The exclusion
-      // is keyed on Python's own empty UTM Zone rather than on a latitude of
-      // ours, so it cannot quietly start covering an ordinary coordinate --
-      // and the count is checked below.
-      if (column === MGRS_COLUMN && theirs[ZONE_COLUMN] === "") {
-        excused += 1;
-        continue;
-      }
-
       const mine = row[column];
       const python = theirs[column];
       const agree =
@@ -168,17 +155,23 @@ test("the row builder produces the rows Python produces", () => {
     }
   }
 
-  // Exactly the two polar points and nothing else. An exclusion nobody counts
-  // is an exclusion that grows.
-  const polar = expected.filter((theirs) => theirs[ZONE_COLUMN] === "").length;
-  assert.equal(excused, polar, "the MGRS exclusion covered more than the polar rows");
-  assert.equal(polar, 2, `expected 2 rows outside UTM, found ${polar}`);
+  // The MGRS column used to be excused on exactly these rows: past UTM's band
+  // Python returned a polar reference and the browser returned nothing. The
+  // loop above compares them like any other cell now, so what is left worth
+  // asserting is that such rows still exist for it to compare, and that they
+  // carry a reference rather than the blank their UTM neighbours carry.
+  const polar = expected.filter((theirs) => theirs[ZONE_COLUMN] === "");
+  assert.ok(polar.length >= 2, `expected rows past UTM's band, found ${polar.length}`);
+  assert.ok(
+    polar.every((theirs) => theirs[MGRS_COLUMN] !== ""),
+    "a row past UTM's band has no MGRS reference, so the polar grid is untested here",
+  );
 });
 
 test("the row comparison is looking at real points", () => {
   // Zero rows compare equal to zero rows. The fixture has to carry the whole
-  // spread: the sample batch, the awkward coordinates, and the two polar
-  // points that are the only way to reach the empty UTM columns.
+  // spread: the sample batch, the awkward coordinates, and the polar points
+  // that are what reach the rows where the UTM columns stay empty.
   assert.ok(table.points.length > 50, `only ${table.points.length} points`);
   assert.ok(
     new Set(table.points.map((p) => p.sourceFile)).size >= 4,
