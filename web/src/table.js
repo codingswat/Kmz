@@ -12,6 +12,9 @@
 
 import { dmsParts, formatDdm, formatDms, toMgrs, toUtm, utmLabel } from "./convert.js";
 
+// Name leads the table: it is what a reader scans for, and a row is much
+// easier to find by its name than by its longitude.
+export const IDENTITY = { title: "name", caption: null, fill: "D9D9D9" };
 export const SEPARATION = {
   title: "separation",
   caption: "decimal degrees",
@@ -24,6 +27,9 @@ export const DETAILS = { title: "details", caption: null, fill: "D9D9D9" };
 
 /** header, kind, band, numberFormat, fill, fontColour */
 export const COLUMNS = [
+  // name -- first, because it is what a reader looks for
+  { header: "Name", kind: "text", band: IDENTITY, fill: "D9D9D9" },
+
   { header: "longitude", kind: "number", band: SEPARATION, numberFormat: "0.000000", fill: "F4B183" },
   { header: "latitude", kind: "number", band: SEPARATION, numberFormat: "0.000000", fill: "F4B183" },
   { header: "elevation", kind: "number", band: SEPARATION, numberFormat: "0.00", fill: "F4B183" },
@@ -43,7 +49,6 @@ export const COLUMNS = [
   { header: "M", kind: "number", band: SEPARATED, numberFormat: "0", fill: "E2EFDA" },
   { header: "S", kind: "number", band: SEPARATED, numberFormat: "0.00", fill: "E2EFDA" },
 
-  { header: "Name", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Description", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lat (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lon (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
@@ -89,6 +94,7 @@ export function rowFor(index, point) {
   const longitude = round6(point.lon);
 
   return [
+    point.name,
     longitude,
     latitude,
     point.alt,
@@ -103,7 +109,6 @@ export function rowFor(index, point) {
     lon.degrees,
     lon.minutes,
     lon.seconds,
-    point.name,
     point.description,
     formatDdm(point.lat, "lat"),
     formatDdm(point.lon, "lon"),

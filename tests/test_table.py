@@ -28,6 +28,7 @@ from kmz_points.table import (
 # specified_layout pins the full 23-column order without importing COLUMNS
 # itself.
 EXPECTED_HEADERS = [
+    "Name",
     "longitude",
     "latitude",
     "elevation",
@@ -42,7 +43,6 @@ EXPECTED_HEADERS = [
     "D",
     "M",
     "S",
-    "Name",
     "Description",
     "Lat (DDM)",
     "Lon (DDM)",

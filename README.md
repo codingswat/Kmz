@@ -47,14 +47,18 @@ start it.
 ## Output
 
 One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point,
-in 23 columns grouped into four labelled bands:
+in 23 columns grouped into five labelled bands:
 
 | Band | Columns |
 |---|---|
+| name | Name |
 | separation (decimal degrees) | longitude, latitude, elevation |
 | Combined D,M,S | #, longitude, latitude |
 | separated D,M,S | lat, D, M, S, long, D, M, S |
-| details | Name, Description, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
+| details | Description, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
+
+`Name` leads the table on both sheets: it is what a reader scans for, and a
+row is far easier to find by its name than by its longitude.
 
 The sheet has three header rows above the data: a merged title per band, a
 merged caption beneath it (only "separation" has one, captioned "decimal

@@ -5,7 +5,7 @@ re-ordering or adding a column is a change to this list and nothing else.
 
 Columns are grouped into bands. A band becomes a merged title across the top
 of its columns, optionally with a second merged caption beneath it, so the
-sheet reads as four labelled blocks rather than one undifferentiated row of
+sheet reads as five labelled blocks rather than one undifferentiated row of
 headers.
 """
 
@@ -27,6 +27,9 @@ class Band:
     caption_fill: str | None = None
 
 
+# Name leads the table: it is what a reader scans for, and a row is much
+# easier to find by its name than by its longitude.
+IDENTITY = Band("name", None, "D9D9D9")
 SEPARATION = Band("separation", "decimal degrees", "F8CBAD", "BDD7EE")
 COMBINED = Band("Combined D,M,S", None, "B4C7E7")
 SEPARATED = Band("separated D,M,S", None, "E2EFDA")
@@ -44,6 +47,8 @@ class Column:
 
 
 COLUMNS: list[Column] = [
+    # name -- first, because it is what a reader looks for
+    Column("Name", "text", IDENTITY, None, "D9D9D9"),
     # separation -- decimal degrees
     Column("longitude", "number", SEPARATION, "0.000000", "F4B183"),
     Column("latitude", "number", SEPARATION, "0.000000", "F4B183"),
@@ -63,7 +68,6 @@ COLUMNS: list[Column] = [
     Column("M", "number", SEPARATED, "0", "E2EFDA"),
     Column("S", "number", SEPARATED, "0.00", "E2EFDA"),
     # details -- everything the mock-up does not show but nobody wanted to lose
-    Column("Name", "text", DETAILS, None, "D9D9D9"),
     Column("Description", "text", DETAILS, None, "D9D9D9"),
     Column("Lat (DDM)", "text", DETAILS, None, "D9D9D9"),
     Column("Lon (DDM)", "text", DETAILS, None, "D9D9D9"),
@@ -135,6 +139,7 @@ def _row_for(index: int, point: Point) -> list:
     longitude = round(point.lon, 6)
 
     return [
+        point.name,
         longitude,
         latitude,
         point.alt,
@@ -149,7 +154,6 @@ def _row_for(index: int, point: Point) -> list:
         lon_d,
         lon_m,
         lon_s,
-        point.name,
         point.description,
         format_ddm(point.lat, "lat"),
         format_ddm(point.lon, "lon"),
