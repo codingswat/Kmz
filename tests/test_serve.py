@@ -2,8 +2,6 @@
 
 import ipaddress
 
-import pytest
-
 import serve
 
 

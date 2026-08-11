@@ -1,0 +1,30 @@
+[tool.ruff]
+# 100, not the default 88. At 88 fourteen existing lines violate; at 100 only
+# two do, and both are KML fixtures that must not be rewrapped. The codebase
+# was written at roughly this width.
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "EXE", "SIM"]
+
+# BLE and DTZ are deliberately NOT selected.
+#
+# BLE001 objects to `except Exception`. This project's central invariant is
+# that nothing raises on bad input -- a corrupt file, a malformed coordinate
+# or an unmeasurable shape becomes a warning and the batch still exports.
+# That is implemented with exactly the broad catches BLE forbids, and it is
+# documented in the module docstrings of pipeline.py, convert.py and
+# geometry.py. Enabling BLE would mean either 16 noqa comments or abandoning
+# the invariant.
+#
+# DTZ objects to naive datetimes. output_filename() uses local time on
+# purpose: a workbook called points_20260811_1432.xlsx should carry the
+# timestamp the person who made it would recognise, not UTC.
+
+[tool.ruff.lint.per-file-ignores]
+# These two lines are CDATA inside KML fixture strings. Rewrapping them would
+# insert a newline into the KML the parser reads, changing what the test
+# actually exercises -- so the line stays long and the rule is silenced.
+"kmz_points/samples.py" = ["E501"]
+"tests/test_kml_parser.py" = ["E501"]

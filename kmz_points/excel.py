@@ -12,10 +12,10 @@ from openpyxl.utils import get_column_letter
 
 from kmz_points.table import (
     COLUMNS,
-    build_table_rows,
     NUMBER_INDEX,
     SOURCE_FILE_INDEX,
     bands,
+    build_table_rows,
 )
 
 # Hard limit imposed by the xlsx format; a longer string makes the file

@@ -8,10 +8,12 @@ Browse button does the same job.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 
 from kmz_points.pipeline import (
     LoadedFile,
@@ -60,10 +62,9 @@ def _apply_theme(root: tk.Misc) -> None:
     as the action the window is for.
     """
     style = ttk.Style(root)
-    try:
+    # A Tcl build without clam; native styling still works.
+    with contextlib.suppress(tk.TclError):
         style.theme_use("clam")
-    except tk.TclError:  # a Tcl build without clam; native styling still works
-        pass
 
     base = tkfont.nametofont("TkDefaultFont")
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from kmz_points.pipeline import load_file, export_to_excel
+from kmz_points.pipeline import export_to_excel, load_file
 from kmz_points.samples import write_samples
 
 

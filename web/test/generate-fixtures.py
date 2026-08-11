@@ -114,7 +114,10 @@ def area_cases():
     add("hole swallows it", box(10.0, 20.0, 0.01), [box(10.0, 20.0, 0.05)])
     add("two corners", [corner(10.0, 20.0), corner(10.01, 20.0)])
     add("polar", box(85.0, 20.0, 0.01))
-    add("spans many zones", [corner(10.0, 0.0), corner(10.0, 20.0), corner(10.1, 20.0), corner(10.1, 0.0)])
+    add(
+        "spans many zones",
+        [corner(10.0, 0.0), corner(10.0, 20.0), corner(10.1, 20.0), corner(10.1, 0.0)],
+    )
     add("empty", [])
     for index in range(120):
         add(

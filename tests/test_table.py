@@ -14,11 +14,10 @@ by band, the same rule the production code enforces.
 
 from kmz_points.models import Point
 from kmz_points.table import (
+    COLUMNS,
     COMBINED,
-    DETAILS,
     SEPARATED,
     SEPARATION,
-    COLUMNS,
     build_table_rows,
     column_index,
     headers,

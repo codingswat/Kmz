@@ -75,7 +75,11 @@ def _shoelace(projected: list[tuple[float, float]]) -> float:
     a shape's area does not depend on which way round it was drawn.
     """
     total = 0.0
-    for (x1, y1), (x2, y2) in zip(projected, projected[1:] + projected[:1]):
+    # strict: both arguments are the same ring, so a length mismatch would be
+    # a bug rather than an input we should tolerate.
+    for (x1, y1), (x2, y2) in zip(
+        projected, projected[1:] + projected[:1], strict=True
+    ):
         total += x1 * y2 - x2 * y1
     return abs(total) / 2.0
 

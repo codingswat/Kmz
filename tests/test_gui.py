@@ -6,12 +6,12 @@ of the drag-and-drop path most likely to break silently, because tkdnd
 brace-quotes any path containing a space.
 """
 
-import os
 
 import pytest
 
 from kmz_points.gui import parse_drop_payload
 from kmz_points.samples import write_samples
+
 
 def _tk_usable() -> bool:
     """Can a window actually be created here?

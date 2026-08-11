@@ -5,7 +5,6 @@ coordinates as lon,lat[,alt] while almost every UI presents lat,lon, so a
 swap here is silent and produces plausible-looking wrong answers.
 """
 
-import pytest
 
 from kmz_points.kml_parser import parse_document
 

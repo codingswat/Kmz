@@ -357,19 +357,19 @@ class TestConvert:
         # per-upload subdirectory the second save can overwrite the first on
         # disk before both are accounted for.
         first = (
-            '<?xml version="1.0"?>'
-            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
-            "<Placemark><name>Alpha</name>"
-            "<Point><coordinates>1,2</coordinates></Point></Placemark>"
-            "</Document></kml>"
-        ).encode()
+            b'<?xml version="1.0"?>'
+            b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+            b"<Placemark><name>Alpha</name>"
+            b"<Point><coordinates>1,2</coordinates></Point></Placemark>"
+            b"</Document></kml>"
+        )
         second = (
-            '<?xml version="1.0"?>'
-            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
-            "<Placemark><name>Bravo</name>"
-            "<Point><coordinates>3,4</coordinates></Point></Placemark>"
-            "</Document></kml>"
-        ).encode()
+            b'<?xml version="1.0"?>'
+            b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+            b"<Placemark><name>Bravo</name>"
+            b"<Point><coordinates>3,4</coordinates></Point></Placemark>"
+            b"</Document></kml>"
+        )
 
         response = signed_in.post(
             "/convert",
