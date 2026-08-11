@@ -127,8 +127,13 @@ Three things to know before you hand the link out:
   can watch that network. It is meant for a trusted office LAN, not the
   internet.
 
+Five wrong passwords from the same machine within a minute and it stops
+answering that machine for the rest of the minute. That makes guessing the
+shared password slow and obvious. It does **not** change the point above:
+this is still a trusted-LAN tool, not something to expose to the internet.
+
 The service is deliberately not part of the `.exe` or `.dmg` — `build.spec`
-excludes Flask. Only you run the server.
+excludes Flask and waitress. Only you run the server.
 
 ## The warning message
 

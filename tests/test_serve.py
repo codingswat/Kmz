@@ -92,4 +92,7 @@ class TestMain:
         printed = capsys.readouterr().out
         assert f":{serve.DEFAULT_PORT}" in printed
         assert started["host"] == "0.0.0.0"
-        assert started["threaded"] is True
+        # waitress takes a thread count where Flask's server took a flag. The
+        # intent is the same one: a colleague converting a large batch must
+        # not block everyone else.
+        assert started["threads"] > 1

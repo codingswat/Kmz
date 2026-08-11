@@ -37,8 +37,18 @@ def lan_address() -> str:
 
 
 def _run_app(**kwargs) -> None:
-    """Indirection so tests can start everything except the server itself."""
-    create_app(kwargs.pop("password")).run(**kwargs)
+    """Indirection so tests can start everything except the server itself.
+
+    waitress rather than Flask's own server, which prints a warning telling
+    the owner not to use it in production and means it: it is single-purpose
+    development scaffolding and gets fragile when several colleagues upload
+    at once. waitress rather than gunicorn because gunicorn does not run on
+    Windows, and the owner may be on either.
+    """
+    from waitress import serve as waitress_serve
+
+    app = create_app(kwargs.pop("password"))
+    waitress_serve(app, **kwargs)
 
 
 def main() -> int:
@@ -55,8 +65,11 @@ def main() -> int:
     print("  The address can change if your laptop gets a new one from DHCP.")
     print()
 
-    # threaded, so one large conversion does not block everyone else.
-    _run_app(password=password, host="0.0.0.0", port=DEFAULT_PORT, threaded=True)
+    # Threads, so one large conversion does not block everyone else. Eight is
+    # waitress's own default and comfortably more than a small office will
+    # ever have converting at once; the work is bounded by the upload cap, so
+    # there is no runaway a smaller number would protect against.
+    _run_app(password=password, host="0.0.0.0", port=DEFAULT_PORT, threads=8)
     return 0
 
 

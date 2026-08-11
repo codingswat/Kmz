@@ -86,6 +86,7 @@ a = Analysis(
         "flask",
         "werkzeug",
         "jinja2",
+        "waitress",
     ],
     noarchive=False,
 )

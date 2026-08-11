@@ -11,6 +11,8 @@ import hmac
 import io
 import secrets
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from flask import (
@@ -37,6 +39,77 @@ MAX_STEM = 100
 DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+DEFAULT_MAX_ATTEMPTS = 5
+DEFAULT_WINDOW_SECONDS = 60.0
+
+
+class LoginAttempts:
+    """How many times each address has just got the password wrong.
+
+    What this buys, precisely: one shared password on a plain-HTTP office LAN
+    can be guessed at whatever rate the server will answer, and answering
+    thousands a second is what makes a short password worthless. Five tries a
+    minute makes that useless and makes it obvious. It does NOT make the
+    service safe to expose to the internet, and BUILDING.md still says so --
+    nothing here changes the threat model, it only removes the free ride.
+
+    Kept in memory and nowhere else. The service already retains nothing and
+    mints a new SECRET_KEY per run, so a lockout surviving a restart would be
+    the one piece of state that outlived everything else.
+
+    Per address rather than global, even though everyone behind one office NAT
+    shares an address. Coarse in that direction is tolerable; the alternative
+    is one person's typo locking out the whole office.
+    """
+
+    def __init__(self, limit: int = DEFAULT_MAX_ATTEMPTS,
+                 window: float = DEFAULT_WINDOW_SECONDS):
+        self.limit = limit
+        self.window = window
+        # serve.py runs this with several worker threads, so every read and
+        # write below is shared mutable state.
+        self._lock = threading.Lock()
+        self._failures: dict[str, list[float]] = {}
+
+    def _recent(self, stamps: list[float], now: float) -> list[float]:
+        return [t for t in stamps if now - t < self.window]
+
+    def _evict(self, now: float) -> None:
+        """Drop addresses whose failures have all aged out.
+
+        Without this the table is a slow leak keyed by anything that can reach
+        the port. With it the bound is exact: at most one entry per address
+        that has failed within the last ``window`` seconds.
+        """
+        for address in list(self._failures):
+            kept = self._recent(self._failures[address], now)
+            if kept:
+                self._failures[address] = kept
+            else:
+                del self._failures[address]
+
+    def blocked(self, address: str) -> bool:
+        """Whether this address has spent its attempts."""
+        now = time.monotonic()
+        with self._lock:
+            return len(self._recent(self._failures.get(address, []), now)) >= self.limit
+
+    def record_failure(self, address: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._evict(now)
+            self._failures.setdefault(address, []).append(now)
+
+    def clear(self, address: str) -> None:
+        """Forget an address's failures, because it just got the password right."""
+        with self._lock:
+            self._failures.pop(address, None)
+
+    def tracked(self) -> int:
+        """How many addresses are currently held. For tests and diagnostics."""
+        with self._lock:
+            return len(self._failures)
 
 
 def _format_mb(num_bytes: int) -> str:
@@ -71,11 +144,16 @@ def safe_upload_name(raw: str, index: int) -> str | None:
     return f"{stem}{suffix}"
 
 
-def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) -> Flask:
+def create_app(
+    password: str,
+    max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    attempt_window: float = DEFAULT_WINDOW_SECONDS,
+) -> Flask:
     """Build the web app.
 
     A factory rather than a module-level app so each test gets its own
-    instance with its own password and upload cap.
+    instance with its own password, upload cap and attempt counter.
     """
     if not password:
         raise ValueError("a password is required")
@@ -110,16 +188,38 @@ def create_app(password: str, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES) 
         return _upload_page()
 
     expected = password.encode("utf-8")
+    attempts = LoginAttempts(max_attempts, attempt_window)
+    app.extensions["login_attempts"] = attempts
 
     @app.post("/login")
     def login():
+        address = request.remote_addr or "unknown"
+
+        if attempts.blocked(address):
+            # 429 rather than a delay. Sleeping here would hold a worker
+            # thread for the duration, which turns a guessing attempt into a
+            # denial of service against the colleagues this is protecting.
+            return (
+                render_template_string(
+                    LOGIN_PAGE,
+                    error=(
+                        f"Too many wrong passwords. Wait "
+                        f"{int(attempt_window)} seconds and try again."
+                    ),
+                ),
+                429,
+            )
+
         # compare_digest so a wrong password cannot be found by timing, and
         # on bytes rather than str: it rejects str operands that are not both
         # ASCII, which would 500 on any accented password.
         supplied = request.form.get("password", "").encode("utf-8")
         if hmac.compare_digest(supplied, expected):
+            attempts.clear(address)
             session["authenticated"] = True
             return redirect(url_for("index"))
+
+        attempts.record_failure(address)
         return render_template_string(LOGIN_PAGE, error="Wrong password."), 401
 
     @app.post("/convert")

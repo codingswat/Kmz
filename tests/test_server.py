@@ -7,6 +7,8 @@ unchanged on every CI platform.
 import io
 import re
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,7 @@ from openpyxl import load_workbook
 
 from kmz_points.excel import data_rows
 from kmz_points.samples import write_samples
-from kmz_points.server import create_app, safe_upload_name
+from kmz_points.server import LoginAttempts, create_app, safe_upload_name
 from kmz_points.table import column_index
 
 PASSWORD = "correct horse"
@@ -507,3 +509,115 @@ class TestDropZone:
         response = signed_in.post("/convert", data=payload(samples))
         assert response.status_code == 200
         assert response.mimetype == XLSX_MIME
+
+
+class TestLoginThrottle:
+    """Guessing the one shared password must not be free.
+
+    The fixtures above build a fresh app per test, so the counter starts empty
+    every time and these cannot make the suite order-dependent -- which also
+    means the existing "wrong password gives 401" tests keep getting 401, as
+    they are nowhere near the limit.
+    """
+
+    def test_the_first_attempts_are_refused_the_ordinary_way(self, client):
+        for _ in range(5):
+            assert client.post("/login", data={"password": "wrong"}).status_code == 401
+
+    def test_one_attempt_past_the_limit_is_throttled(self, client):
+        for _ in range(5):
+            client.post("/login", data={"password": "wrong"})
+        response = client.post("/login", data={"password": "wrong"})
+        assert response.status_code == 429
+
+    def test_the_throttle_page_says_how_long_to_wait(self, client):
+        for _ in range(6):
+            response = client.post("/login", data={"password": "wrong"})
+        body = response.get_data(as_text=True)
+        assert "Too many" in body
+        assert "seconds" in body
+
+    def test_the_right_password_is_refused_once_throttled(self, client):
+        # The point of a throttle is that it does not care whether this one
+        # happens to be right; otherwise guessing costs nothing again.
+        for _ in range(5):
+            client.post("/login", data={"password": "wrong"})
+        assert client.post("/login", data={"password": PASSWORD}).status_code == 429
+
+    def test_a_success_before_the_limit_clears_the_count(self, client):
+        for _ in range(4):
+            client.post("/login", data={"password": "wrong"})
+        assert client.post("/login", data={"password": PASSWORD}).status_code == 302
+
+        # Four more would have tripped the old count; they must not now.
+        for _ in range(4):
+            assert client.post("/login", data={"password": "wrong"}).status_code == 401
+
+    def test_the_window_expires(self):
+        app = create_app(PASSWORD, attempt_window=0.05)
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        for _ in range(5):
+            client.post("/login", data={"password": "wrong"})
+        assert client.post("/login", data={"password": "wrong"}).status_code == 429
+
+        time.sleep(0.06)
+        assert client.post("/login", data={"password": "wrong"}).status_code == 401
+
+    def test_the_limit_is_configurable(self):
+        app = create_app(PASSWORD, max_attempts=2)
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        assert client.post("/login", data={"password": "wrong"}).status_code == 401
+        assert client.post("/login", data={"password": "wrong"}).status_code == 401
+        assert client.post("/login", data={"password": "wrong"}).status_code == 429
+
+
+class TestAttemptTableBounds:
+    """The counter must not become a slow leak keyed by anything that connects."""
+
+    def test_it_holds_one_entry_per_recently_failing_address(self):
+        attempts = LoginAttempts(limit=5, window=60.0)
+        for index in range(50):
+            attempts.record_failure(f"10.0.0.{index}")
+        assert attempts.tracked() == 50
+
+    def test_addresses_whose_failures_aged_out_are_dropped(self):
+        attempts = LoginAttempts(limit=5, window=0.05)
+        for index in range(50):
+            attempts.record_failure(f"10.0.0.{index}")
+        assert attempts.tracked() == 50
+
+        time.sleep(0.06)
+        # Eviction runs on write, so one more failure is what prunes the rest.
+        # The table then holds exactly that one address -- the bound is "one
+        # entry per address that failed inside the window", and after the
+        # sleep only this address has.
+        attempts.record_failure("10.0.0.99")
+        assert attempts.tracked() == 1
+
+    def test_a_cleared_address_is_forgotten(self):
+        attempts = LoginAttempts()
+        attempts.record_failure("10.0.0.1")
+        assert attempts.tracked() == 1
+        attempts.clear("10.0.0.1")
+        assert attempts.tracked() == 0
+
+    def test_counting_is_safe_from_several_threads(self):
+        # serve.py runs with eight worker threads, so the counter is shared.
+        attempts = LoginAttempts(limit=1000, window=60.0)
+
+        def hammer():
+            for _ in range(200):
+                attempts.record_failure("10.0.0.1")
+
+        workers = [threading.Thread(target=hammer) for _ in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        assert attempts.blocked("10.0.0.1") is True
+        assert attempts.tracked() == 1
