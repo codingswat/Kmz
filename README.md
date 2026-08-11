@@ -164,7 +164,7 @@ leaving the workbook somewhere you would not think to look.
 pytest
 ```
 
-301 tests. The GUI tests need a display and skip without one; on a headless
+331 tests. The GUI tests need a display and skip without one; on a headless
 machine run them under Xvfb:
 
 ```bash

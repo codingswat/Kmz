@@ -22,3 +22,6 @@ staging/
 # would let the browser version be checked against a stale reference, which is
 # the one failure this cross-check exists to prevent.
 web/test/fixtures.json
+
+# macOS Finder metadata, created just by opening a folder in the GUI.
+.DS_Store
