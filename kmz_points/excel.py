@@ -270,7 +270,9 @@ def _write_areas(book, measured_areas: list) -> None:
         _banner(sheet, row_number, _area_banner_text(measured), _BANNER_FILL)
         row_number += 1
 
-        rings = [(None, measured.area.outer)]
+        # The label is None for the outer ring and a banner string for a hole;
+        # annotated because the first element alone would infer it as None-only.
+        rings: list[tuple[str | None, list]] = [(None, measured.area.outer)]
         for position, hole in enumerate(measured.area.holes, start=1):
             rings.append((f"hole {position} — {len(hole)} corners", hole))
 

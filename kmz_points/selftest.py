@@ -49,10 +49,10 @@ def run_selftest() -> tuple[int, str]:
 
     # parse + archive, over a real KML and a real KMZ
     with tempfile.TemporaryDirectory() as workspace:
-        workspace = Path(workspace)
+        root = Path(workspace)
         try:
-            samples = write_samples(workspace / "in")
-            summary = run(samples, workspace / "out")
+            samples = write_samples(root / "in")
+            summary = run(samples, root / "out")
             ok = summary.points_extracted == _EXPECTED_ROWS
             record("parse", ok, f"{summary.points_extracted} points from 3 files")
         except Exception as exc:

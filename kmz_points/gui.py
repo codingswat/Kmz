@@ -14,6 +14,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
+from typing import Literal
 
 from kmz_points.pipeline import (
     LoadedFile,
@@ -41,7 +42,11 @@ _SELECTION = "#dbeafe"
 _GAP = 8  # spacing unit; every pad below is a multiple of it
 
 
-def _scaled(base: tkfont.Font, factor: float, weight: str = "normal") -> tkfont.Font:
+def _scaled(
+    base: tkfont.Font,
+    factor: float,
+    weight: Literal["normal", "bold"] = "normal",
+) -> tkfont.Font:
     """A copy of the platform's default font at a different size.
 
     Tk reports negative sizes in pixels and positive ones in points, and

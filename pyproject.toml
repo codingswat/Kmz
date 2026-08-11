@@ -28,3 +28,27 @@ select = ["E", "F", "I", "UP", "B", "C4", "EXE", "SIM"]
 # actually exercises -- so the line stays long and the rule is silenced.
 "kmz_points/samples.py" = ["E501"]
 "tests/test_kml_parser.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+# Deliberately not --strict. The codebase is annotated but not exhaustively,
+# and the aim here is a check that passes today and catches real mistakes
+# tomorrow, not a migration project.
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# None of these ship type information. mgrs and utm are small C-backed or
+# untyped packages; lxml's stubs live in a separate distribution that would
+# be a new dev dependency for no benefit here.
+module = [
+    "lxml.*",
+    "mgrs.*",
+    "openpyxl.*",
+    "tkinterdnd2.*",
+    "utm.*",
+    "geographiclib.*",
+]
+ignore_missing_imports = true

@@ -8,6 +8,7 @@ it could read, and reports the rest as warnings.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -170,7 +171,10 @@ def export_to_stream(loaded: list[LoadedFile], stream: BinaryIO) -> BatchSummary
 
 
 def run(
-    paths: list[str | Path],
+    # Sequence, not list: this only iterates, and list is invariant, so a
+    # list[Path] -- which is what write_samples hands back -- is not a
+    # list[str | Path].
+    paths: Sequence[str | Path],
     output_dir: str | Path,
     when: datetime | None = None,
 ) -> BatchSummary:
