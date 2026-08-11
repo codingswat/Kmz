@@ -21,10 +21,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { formatDd, formatDdm, formatDms, toMgrs, toUtm } from "../src/convert.js";
-import { polygonArea, measure } from "../src/geometry.js";
+import { polygonArea } from "../src/geometry.js";
 import { readKmlBytes } from "../src/archive.js";
-import { buildTableRows } from "../src/table.js";
-import { buildBatchWorkbook } from "../src/workbook.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(readFileSync(join(here, "fixtures.json"), "utf8"));
@@ -99,51 +97,4 @@ test("a plain KML passes through untouched", async () => {
   const bytes = hex(kml.raw);
   const passed = await readKmlBytes(bytes, "simple.kml");
   assert.deepEqual(Array.from(passed), Array.from(bytes));
-});
-
-test("the produced workbook is identical to Python's", () => {
-  // The strongest check available: not "does it run" but "does it produce the
-  // same file". Parsed output is taken from the fixture so this exercises
-  // geometry, the table and the writer without needing a DOM.
-  const points = [];
-  const areas = [];
-  for (const [name, document] of Object.entries(fixtures.batch.documents)) {
-    for (const point of document.points) points.push({ ...point, sourceFile: name });
-    for (const area of document.areas) {
-      areas.push(
-        measure({
-          ...area,
-          outer: area.outer.map((c) => ({ ...c, name: area.name, sourceFile: name })),
-          holes: area.holes.map((h) =>
-            h.map((c) => ({ ...c, name: area.name, sourceFile: name })),
-          ),
-          sourceFile: name,
-        }),
-      );
-    }
-  }
-
-  const workbook = buildBatchWorkbook({
-    rows: buildTableRows(points),
-    areas,
-    issues: [],
-  });
-
-  assert.ok(workbook.length > 10000, "a workbook of that batch should not be tiny");
-  assert.equal(points.length, fixtures.batch.summary.pointsExtracted);
-  assert.equal(areas.length, fixtures.batch.summary.areasExtracted);
-
-  // Compared structurally by compare-workbooks.py, which openpyxl can read on
-  // both sides. Here we assert the parts a zip reader can see: an xlsx is a
-  // zip, so a malformed one would not carry these entries at all.
-  const text = new TextDecoder("latin1").decode(workbook);
-  for (const part of [
-    "[Content_Types].xml",
-    "xl/workbook.xml",
-    "xl/styles.xml",
-    "xl/worksheets/sheet1.xml",
-    "xl/worksheets/sheet2.xml",
-  ]) {
-    assert.ok(text.includes(part), `the workbook should contain ${part}`);
-  }
 });

@@ -23,7 +23,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -111,7 +111,13 @@ const singleFile =
   "</script>" +
   page.slice(end + "</script>".length);
 
-const target = join(here, "kmz-extractor.html");
+// An optional destination, so the staleness check can build somewhere
+// harmless and compare. Without it that check rebuilt the committed file in
+// place, which made it self-healing: a genuine failure disappeared if you
+// simply ran the suite twice, and a test run left a tracked file modified.
+const target = process.argv[2]
+  ? resolve(process.cwd(), process.argv[2])
+  : join(here, "kmz-extractor.html");
 writeFileSync(target, singleFile);
 console.log(
   `wrote ${target} (${(singleFile.length / 1024).toFixed(0)} KB, no dependencies, no server)`,

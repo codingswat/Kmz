@@ -254,16 +254,27 @@ function issuesSheet(issues, look) {
 }
 
 /**
- * Build the workbook bytes for a batch.
+ * Build a batch's sheets, and the styles they refer to.
  *
  * Sheet order is Points, Areas, Issues -- the data first, the complaints last,
  * so opening the file lands on something useful.
+ *
+ * Separate from buildBatchWorkbook because everything a reader sees is decided
+ * here and the writer below only encodes it, so a test can compare these
+ * sheets against what Python lays out without either side having to agree on
+ * bytes.
  */
-export function buildBatchWorkbook({ rows, areas = [], issues = [] }) {
+export function buildBatchSheets({ rows, areas = [], issues = [] }) {
   const look = new Look();
   const sheets = [pointsSheet(rows, look)];
   if (areas.length) sheets.push(areasSheet(areas, look));
   if (issues.length) sheets.push(issuesSheet(issues, look));
+  return { sheets, look };
+}
+
+/** Build the workbook bytes for a batch. */
+export function buildBatchWorkbook(batch) {
+  const { sheets, look } = buildBatchSheets(batch);
   return buildWorkbook(sheets, look.styles);
 }
 

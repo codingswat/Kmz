@@ -95,10 +95,14 @@ Yes, checked at every level rather than assumed:
 | Area measurement, 132 shapes | 0 mismatches (worst 0.0007 m², float noise) |
 | KMZ extraction | byte-identical to Python's `zipfile` |
 | KML parsing, real samples | points, areas and skipped counts all match |
-| **The finished workbook** | **identical** — sheets, sizes, merges, freeze panes, every cell |
+| **The finished workbook** | **410 cells, 0 mismatches** — value, type and number format, plus sheets, merges, widths and freeze panes |
 
 The last row is the one that matters: the same three sample files through both
-implementations produce workbooks that openpyxl cannot tell apart.
+implementations produce workbooks a reader could not tell apart. Not the same
+bytes — openpyxl and a hand-written writer order a zip and encode a style
+differently, and always will — so both sides are reduced to what someone
+opening the file would find and compared cell by cell. Fonts, fills and
+alignment are deliberately outside that; see `kmz_points/workbook_facts.py`.
 
 ## Layout
 

@@ -9,7 +9,8 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -24,13 +25,22 @@ function scriptOf(html) {
 
 test("the committed single file matches a fresh build", () => {
   const committed = readFileSync(built, "utf8");
-  execFileSync(process.execPath, [join(web, "build.mjs")], { stdio: "pipe" });
-  const rebuilt = readFileSync(built, "utf8");
-  assert.equal(
-    rebuilt,
-    committed,
-    "kmz-extractor.html is out of date — run `node web/build.mjs` and commit the result",
-  );
+  // Build somewhere else and compare. Rebuilding over the committed file
+  // made this check self-healing -- it reported a real staleness once, then
+  // passed on the very next run because the first run had fixed it -- and it
+  // left a tracked file modified after merely running the tests.
+  const scratch = mkdtempSync(join(tmpdir(), "kmz-bundle-"));
+  try {
+    const fresh = join(scratch, "kmz-extractor.html");
+    execFileSync(process.execPath, [join(web, "build.mjs"), fresh], { stdio: "pipe" });
+    assert.equal(
+      readFileSync(fresh, "utf8"),
+      committed,
+      "kmz-extractor.html is out of date — run `node web/build.mjs` and commit the result",
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test("the bundle is valid JavaScript", () => {

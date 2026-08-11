@@ -31,6 +31,7 @@ from kmz_points.geometry import polygon_area  # noqa: E402
 from kmz_points.models import Point  # noqa: E402
 from kmz_points.pipeline import export_to_excel, load_file  # noqa: E402
 from kmz_points.samples import write_samples  # noqa: E402
+from kmz_points.workbook_facts import workbook_facts  # noqa: E402
 
 
 def coordinate_cases():
@@ -182,6 +183,10 @@ def sample_batch():
     return {
         "documents": documents,
         "workbook": Path(summary.output_path).read_bytes().hex(),
+        # What the browser's workbook is actually checked against. The hex
+        # above is the file itself, which no two writers produce identically;
+        # these are the parts of it a reader would notice.
+        "workbookFacts": workbook_facts(summary.output_path),
         "summary": {
             "filesRead": summary.files_read,
             "pointsExtracted": summary.points_extracted,
