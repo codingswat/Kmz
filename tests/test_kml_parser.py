@@ -308,6 +308,213 @@ ROUTE_KML = """<?xml version="1.0" encoding="UTF-8"?>
 </kml>"""
 
 
+EXTENDED_DATA_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:ex="http://example.test/ext">
+  <Document>
+    <Placemark>
+      <name>Typed</name>
+      <ExtendedData>
+        <Data name="plot_id"><displayName>Plot number</displayName><value>A-12</value></Data>
+        <SchemaData schemaUrl="#survey"><SimpleData name="owner">Ada</SimpleData></SchemaData>
+        <ex:cost>42</ex:cost>
+      </ExtendedData>
+      <Point><coordinates>1.0,2.0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Bare</name>
+      <Point><coordinates>3.0,4.0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>"""
+
+FOLDER_EXTENDED_DATA_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Folder>
+      <ExtendedData><Data name="folder"><value>outer</value></Data></ExtendedData>
+      <Placemark>
+        <name>Inside</name>
+        <Point><coordinates>1.0,2.0</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>"""
+
+EXTENDED_DATA_POLYGON_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Plot 12</name>
+      <ExtendedData><Data name="owner"><value>Ada</value></Data></ExtendedData>
+      <Polygon>
+        <outerBoundaryIs><LinearRing><coordinates>
+          30.000,10.000 30.010,10.000 30.010,10.010 30.000,10.000
+        </coordinates></LinearRing></outerBoundaryIs>
+        <innerBoundaryIs><LinearRing><coordinates>
+          30.002,10.002 30.004,10.002 30.004,10.004
+        </coordinates></LinearRing></innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>"""
+
+
+class TestExtendedData:
+    """The attributes Google My Maps and most GIS exporters write. Both forms
+    are matched on their local name and keyed on the name ATTRIBUTE, and the
+    pairs are flattened into one cell here rather than at the writer, because
+    the browser port has to produce the same string character for character."""
+
+    def test_the_data_form_is_read(self):
+        assert "plot_id=A-12" in parse(EXTENDED_DATA_KML).points[0].attributes
+
+    def test_the_schema_data_form_is_read(self):
+        assert "owner=Ada" in parse(EXTENDED_DATA_KML).points[0].attributes
+
+    def test_both_forms_arrive_in_document_order(self):
+        assert parse(EXTENDED_DATA_KML).points[0].attributes == "plot_id=A-12; owner=Ada"
+
+    def test_the_name_attribute_is_the_key_not_the_display_name(self):
+        # displayName is presentation and may repeat between two fields, so it
+        # would make a poor key.
+        attributes = parse(EXTENDED_DATA_KML).points[0].attributes
+        assert "Plot number" not in attributes
+
+    def test_untyped_vendor_children_are_not_read(self):
+        # No agreed key for them, and it would put arbitrary vendor XML in a
+        # spreadsheet cell.
+        assert "42" not in parse(EXTENDED_DATA_KML).points[0].attributes
+
+    def test_a_placemark_without_extended_data_gets_an_empty_string(self):
+        point = parse(EXTENDED_DATA_KML).points[1]
+        assert point.attributes == ""
+
+    def test_a_folders_extended_data_is_not_inherited(self):
+        # <name> is read as a direct child for the same reason: a descendant
+        # search would attribute the folder's to every placemark under it.
+        assert parse(FOLDER_EXTENDED_DATA_KML).points[0].attributes == ""
+
+    def test_an_area_carries_the_attributes_of_its_placemark(self):
+        assert parse(EXTENDED_DATA_POLYGON_KML).areas[0].attributes == "owner=Ada"
+
+    def test_every_corner_carries_them_too(self):
+        # A corner row on the Areas sheet is the area's placemark, so the cell
+        # has to be filled there as well as on the area's banner.
+        area = parse(EXTENDED_DATA_POLYGON_KML).areas[0]
+        corners = area.outer + [c for hole in area.holes for c in hole]
+        assert {c.attributes for c in corners} == {"owner=Ada"}
+
+
+class TestAttributeEscaping:
+    """Everything ends up in one cell, so the two characters the joined form
+    is built from -- and the backslash that escapes them -- have to survive a
+    value that already contains them. Two different attribute sets flattening
+    to the same cell would be a silent merge nobody could unpick."""
+
+    def one(self, value, key="k"):
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            f'<ExtendedData><Data name="{key}"><value>{value}</value></Data></ExtendedData>'
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        return parse(kml).points[0].attributes
+
+    def test_a_semicolon_in_a_value_is_escaped(self):
+        assert self.one("a; b") == "k=a\\; b"
+
+    def test_an_equals_in_a_value_is_escaped(self):
+        assert self.one("a=b") == "k=a\\=b"
+
+    def test_a_backslash_is_doubled(self):
+        assert self.one("C:\\plots") == "k=C:\\\\plots"
+
+    def test_a_backslash_is_escaped_before_the_characters_it_escapes(self):
+        # Escaping it afterwards would double the ones the other two rules had
+        # just added, and the cell would not read back.
+        assert self.one("a\\;b") == "k=a\\\\\\;b"
+
+    def test_the_key_is_escaped_as_well_as_the_value(self):
+        assert self.one("v", key="a;b") == "a\\;b=v"
+
+    def test_two_sets_that_would_collide_unescaped_stay_distinct(self):
+        both_in_one = self.one("b; c=d", key="a")
+        two_pairs = parse(
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            '<ExtendedData><Data name="a"><value>b</value></Data>'
+            '<Data name="c"><value>d</value></Data></ExtendedData>'
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        ).points[0].attributes
+        assert two_pairs == "a=b; c=d"
+        assert both_in_one != two_pairs
+
+    def test_newlines_and_tabs_become_a_single_space(self):
+        # A cell is one line; a row nobody can read without widening it is a
+        # worse answer than a space.
+        assert self.one("one\ntwo\tthree") == "k=one two three"
+
+    def test_the_whitespace_a_pretty_printer_adds_is_dropped(self):
+        assert self.one("\n        v\n      ") == "k=v"
+
+
+class TestExtendedDataFailSoft:
+    """The invariant the whole pipeline rests on: a point still comes out."""
+
+    def test_a_data_with_no_name_attribute_is_skipped_not_guessed(self):
+        # Nothing to label the value with, so there is no pair to write.
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            "<ExtendedData><Data><value>orphan</value></Data></ExtendedData>"
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        result = parse(kml)
+        assert result.points[0].attributes == ""
+
+    def test_a_data_with_no_value_keeps_its_key(self):
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            '<ExtendedData><Data name="k"></Data></ExtendedData>'
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        assert parse(kml).points[0].attributes == "k="
+
+    def test_an_empty_extended_data_yields_an_empty_string_not_none(self):
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            "<ExtendedData></ExtendedData>"
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        assert parse(kml).points[0].attributes == ""
+
+    def test_the_same_key_twice_keeps_both_rather_than_losing_one(self):
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            '<ExtendedData><Data name="k"><value>1</value></Data>'
+            '<Data name="k"><value>2</value></Data></ExtendedData>'
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        assert parse(kml).points[0].attributes == "k=1; k=2"
+
+    def test_malformed_extended_data_still_yields_the_point(self):
+        # lxml recovers what it can; whatever it hands back, a point comes out
+        # and the attributes are a string.
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            '<ExtendedData><Data name="k"><value>unclosed</Data>'
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        result = parse(kml)
+        assert len(result.points) == 1
+        assert isinstance(result.points[0].attributes, str)
+
+    def test_extended_data_that_is_not_extended_data_at_all(self):
+        kml = (
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>'
+            "<ExtendedData>loose text<Data/><SchemaData/><SimpleData/></ExtendedData>"
+            "<Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>"
+        )
+        assert parse(kml).points[0].attributes == ""
+
+
 class TestAreas:
     def test_a_polygon_becomes_an_area(self):
         areas = parse(POLYGON_KML).areas

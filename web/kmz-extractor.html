@@ -1404,6 +1404,9 @@ const COLUMNS = [
   { header: "S", kind: "number", band: SEPARATED, numberFormat: "0.00", fill: "E2EFDA" },
 
   { header: "Description", kind: "text", band: DETAILS, fill: "D9D9D9" },
+  // Beside Description, because it is the other thing a placemark says about
+  // itself in words rather than in coordinates.
+  { header: "Attributes", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lat (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lon (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "UTM Zone", kind: "text", band: DETAILS, fill: "D9D9D9" },
@@ -1464,6 +1467,7 @@ function rowFor(index, point) {
     lon.minutes,
     lon.seconds,
     point.description,
+    point.attributes,
     formatDdm(point.lat, "lat"),
     formatDdm(point.lon, "lon"),
     utm ? `${utm.zone}${utm.band}` : "",
@@ -1835,6 +1839,69 @@ function textOf(element) {
   return element ? (element.textContent || "").trim() : "";
 }
 
+/**
+ * Make one key or value safe to join with `=` and `"; "`.
+ *
+ * Without this a value holding a semicolon reads as two pairs and a value
+ * holding an equals sign moves the boundary between key and value, so two
+ * different attribute sets could flatten to the same cell. The backslash is
+ * escaped first: doing it last would double the ones the other two rules had
+ * just added.
+ *
+ * A cell is one line, so tabs and newlines become a space. Only spaces are
+ * trimmed off the ends -- `trim()` also removes half a dozen unicode blanks
+ * that Python's `strip(" ")` leaves alone, and the two have to agree.
+ */
+function escapeAttribute(text) {
+  return text
+    .replace(/[\t\r\n]+/g, " ")
+    .replace(/^ +| +$/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/=/g, "\\=")
+    .replace(/;/g, "\\;");
+}
+
+/**
+ * A placemark's ExtendedData flattened into one cell's worth of text.
+ *
+ * Two forms are read, both keyed on the `name` ATTRIBUTE:
+ *
+ *     <ExtendedData><Data name="k"><value>v</value></Data></ExtendedData>
+ *     <ExtendedData><SchemaData><SimpleData name="k">v</SimpleData>…
+ *
+ * A <Data> may also carry a <displayName>. That is presentation and may
+ * repeat between two different fields, so it makes a poor key and is not used
+ * as one.
+ *
+ * Untyped namespaced children -- <ExtendedData><ns:foo>v</ns:foo></…> -- are
+ * deliberately not read. There is no agreed key for them, and reading them
+ * would put arbitrary vendor XML into a spreadsheet cell.
+ */
+function extendedData(placemark) {
+  const extended = childNamed(placemark, "ExtendedData");
+  if (!extended) return "";
+
+  const pairs = [];
+  // Document order, both forms interleaved, matching Python's walk.
+  const walk = (parent) => {
+    for (const child of parent.children) {
+      const local = localName(child);
+      const key =
+        local === "Data" || local === "SimpleData" ? child.getAttribute("name") : null;
+      // Nothing to label the value with, so there is no pair to write.
+      if (key !== null) {
+        const holder = local === "Data" ? childNamed(child, "value") : child;
+        const text = holder ? holder.textContent || "" : "";
+        pairs.push(`${escapeAttribute(key)}=${escapeAttribute(text)}`);
+      }
+      walk(child);
+    }
+  };
+  walk(extended);
+
+  return pairs.join("; ");
+}
+
 /** Reduce CDATA/HTML description markup to a single line of plain text. */
 function plainText(raw) {
   if (!raw || !raw.trim()) return "";
@@ -1879,7 +1946,13 @@ function parseCoordinateList(text) {
     .filter((corner) => corner !== null);
 }
 
-function ringCorners(boundary, name, sourceFile) {
+/**
+ * The corners of a LinearRing inside an outer/inner boundary element.
+ *
+ * A corner carries the area's attributes: they describe the placemark the
+ * ring belongs to, and a corner row on the Areas sheet is that placemark.
+ */
+function ringCorners(boundary, name, attributes, sourceFile) {
   const corners = [];
   for (const ring of descendants(boundary, "LinearRing")) {
     const coordinates = childNamed(ring, "coordinates");
@@ -1891,26 +1964,27 @@ function ringCorners(boundary, name, sourceFile) {
         lat: corner.lat,
         alt: corner.alt,
         sourceFile,
+        attributes,
       });
     }
   }
   return corners;
 }
 
-function parsePolygon(polygon, name, description, sourceFile) {
+function parsePolygon(polygon, name, description, attributes, sourceFile) {
   const outer = [];
   for (const boundary of descendants(polygon, "outerBoundaryIs")) {
-    outer.push(...ringCorners(boundary, name, sourceFile));
+    outer.push(...ringCorners(boundary, name, attributes, sourceFile));
   }
   if (!outer.length) return null;
 
   const holes = [];
   for (const boundary of descendants(polygon, "innerBoundaryIs")) {
-    const corners = ringCorners(boundary, name, sourceFile);
+    const corners = ringCorners(boundary, name, attributes, sourceFile);
     if (corners.length) holes.push(corners);
   }
 
-  return { name, description, outer, holes, sourceFile };
+  return { name, description, outer, holes, sourceFile, attributes };
 }
 
 /**
@@ -1934,6 +2008,7 @@ function parseDocument(text, sourceFile) {
     const description = plainText(
       descriptionElement ? descriptionElement.textContent : "",
     );
+    const attributes = extendedData(placemark);
 
     const walk = (element) => {
       for (const child of element.children) {
@@ -1962,11 +2037,12 @@ function parseDocument(text, sourceFile) {
         lat: corner.lat,
         alt: corner.alt,
         sourceFile,
+        attributes,
       });
     }
 
     for (const polygon of descendants(placemark, "Polygon")) {
-      const area = parsePolygon(polygon, name, description, sourceFile);
+      const area = parsePolygon(polygon, name, description, attributes, sourceFile);
       if (!area) {
         result.warnings.push(
           `${sourceFile}: skipped area ${name || "<unnamed>"} (no usable outline)`,

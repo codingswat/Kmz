@@ -75,12 +75,19 @@ class Text {
 }
 
 class Element {
-  constructor(nodeName) {
+  constructor(nodeName, attributes = new Map()) {
     this.nodeName = nodeName;
     // What a browser reports for <kml:Placemark>, and what kml.js reads.
     this.localName = nodeName.includes(":") ? nodeName.slice(nodeName.indexOf(":") + 1) : nodeName;
+    this.attributes = attributes;
     this.childNodes = [];
     this.parentNode = null;
+  }
+
+  /** null for an absent attribute, which is what a browser returns. */
+  getAttribute(name) {
+    const value = this.attributes.get(name);
+    return value === undefined ? null : value;
   }
 
   get children() {
@@ -141,6 +148,29 @@ function tagNamesOf(selector) {
     }
   }
   return new Set(parts.map((part) => part.toLowerCase()));
+}
+
+// name, then optionally = and a value that is double-quoted, single-quoted,
+// or bare. XML requires the quotes; the bare form is here because HTML allows
+// it and a description is HTML.
+const ATTRIBUTE = /([^\s/>=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+
+/**
+ * The attributes of a start tag, by name.
+ *
+ * kml.js reads exactly one of them -- the `name` on a <Data> or <SimpleData>,
+ * which is what keys an ExtendedData pair. Names are stored as written rather
+ * than lowercased in HTML mode: XML is case-sensitive, that is where the only
+ * attribute anyone reads lives, and nothing reads one out of a description.
+ */
+function attributesOf(body) {
+  const found = new Map();
+  for (const [, name, quoted, single, bare] of body.matchAll(ATTRIBUTE)) {
+    const value = quoted ?? single ?? bare;
+    // A valueless attribute is the empty string in a browser, not null.
+    found.set(name, value === undefined ? "" : decodeEntities(value));
+  }
+  return found;
 }
 
 /** Where a tag ends, skipping any ">" inside a quoted attribute value. */
@@ -248,9 +278,7 @@ function parseMarkup(source, { html, into }) {
     if (!named) return "a tag with no name";
     const name = normalise(named[0]);
 
-    // Attributes are parsed only far enough to be skipped: kml.js reads none
-    // of them, and storing them would be untested code.
-    const element = new Element(name);
+    const element = new Element(name, attributesOf(body.slice(named[0].length)));
     top().append(element);
     if (!selfClosing && !(html && VOID_ELEMENTS.has(name))) stack.push(element);
   }

@@ -47,7 +47,7 @@ start it.
 ## Output
 
 One workbook per batch, named `points_YYYYMMDD_HHMM.xlsx`, one row per point,
-in 23 columns grouped into five labelled bands:
+in 24 columns grouped into five labelled bands:
 
 | Band | Columns |
 |---|---|
@@ -55,7 +55,7 @@ in 23 columns grouped into five labelled bands:
 | separation (decimal degrees) | longitude, latitude, elevation |
 | Combined D,M,S | #, longitude, latitude |
 | separated D,M,S | lat, D, M, S, long, D, M, S |
-| details | Description, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
+| details | Description, Attributes, Lat (DDM), Lon (DDM), UTM Zone, Easting (m), Northing (m), MGRS, Source File |
 
 `Name` leads the table on both sheets: it is what a reader scans for, and a
 row is far easier to find by its name than by its longitude.
@@ -73,8 +73,8 @@ widths are fitted to content.
 `longitude`, `latitude`, `elevation`, `#`, the numeric `lat`/`long` columns
 and their `D`/`M`/`S` breakdowns, `Easting (m)` and `Northing (m)` are stored
 as real numbers so they sort and work in formulas; the combined D,M,S text,
-`Name`, `Description`, the DDM columns, `UTM Zone`, `MGRS` and `Source File`
-are formatted text.
+`Name`, `Description`, `Attributes`, the DDM columns, `UTM Zone`, `MGRS` and
+`Source File` are formatted text.
 
 #### D, M, S are magnitudes, not signed values
 
@@ -148,6 +148,39 @@ counted and reported as *"N non-point features skipped"*.
 
 Descriptions are converted from CDATA/HTML to a single line of plain text.
 
+### The Attributes column
+
+Google My Maps and most GIS tools put a placemark's real attributes in
+`<ExtendedData>` rather than in its description. Both of the forms they write
+are read, and both are keyed on the `name` **attribute** — a `<Data>` may also
+carry a `<displayName>`, but that is presentation and two fields may share
+one, so it makes a poor key:
+
+```xml
+<ExtendedData><Data name="owner"><value>Ada</value></Data></ExtendedData>
+<ExtendedData><SchemaData><SimpleData name="owner">Ada</SimpleData></SchemaData></ExtendedData>
+```
+
+All of a placemark's pairs go into one cell, in the order the file lists them,
+as `key=value` joined with `; ` — so the whole row stays one row:
+
+```
+owner=Ada; plot_id=A-12; surveyed=2026-03-14
+```
+
+A value may itself contain a semicolon or an equals sign, which would
+otherwise read as a pair boundary that is not there. So `\`, `=` and `;` are
+escaped with a backslash, and tabs and newlines become a single space. Two
+different sets of attributes can never produce the same cell.
+
+Untyped vendor children — `<ExtendedData><ex:cost>42</ex:cost></ExtendedData>`
+— are deliberately **not** read: there is no agreed key for them, and it would
+put arbitrary XML in a spreadsheet cell. A placemark with no `ExtendedData`
+leaves the cell empty.
+
+An area's corners carry the area's attributes, so the column is filled on the
+Areas sheet too.
+
 ### Failure handling
 
 Nothing aborts a batch. A corrupt file, a KMZ with no KML inside, a file with
@@ -164,7 +197,7 @@ leaving the workbook somewhere you would not think to look.
 pytest
 ```
 
-331 tests. The GUI tests need a display and skip without one; on a headless
+409 tests. The GUI tests need a display and skip without one; on a headless
 machine run them under Xvfb:
 
 ```bash

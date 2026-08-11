@@ -69,6 +69,9 @@ COLUMNS: list[Column] = [
     Column("S", "number", SEPARATED, "0.00", "E2EFDA"),
     # details -- everything the mock-up does not show but nobody wanted to lose
     Column("Description", "text", DETAILS, None, "D9D9D9"),
+    # Beside Description, because it is the other thing a placemark says about
+    # itself in words rather than in coordinates.
+    Column("Attributes", "text", DETAILS, None, "D9D9D9"),
     Column("Lat (DDM)", "text", DETAILS, None, "D9D9D9"),
     Column("Lon (DDM)", "text", DETAILS, None, "D9D9D9"),
     Column("UTM Zone", "text", DETAILS, None, "D9D9D9"),
@@ -155,6 +158,7 @@ def _row_for(index: int, point: Point) -> list:
         lon_m,
         lon_s,
         point.description,
+        point.attributes,
         format_ddm(point.lat, "lat"),
         format_ddm(point.lon, "lon"),
         utm_point.zone if utm_point else "",

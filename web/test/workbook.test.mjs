@@ -43,13 +43,20 @@ function sampleBatch() {
   for (const [name, document] of Object.entries(fixtures.batch.documents)) {
     for (const point of document.points) points.push({ ...point, sourceFile: name });
     for (const area of document.areas) {
+      // A corner takes its name, source file and attributes from the area,
+      // which is what the parser does with them; the fixture records a corner
+      // as coordinates alone.
+      const asCorner = (c) => ({
+        ...c,
+        name: area.name,
+        sourceFile: name,
+        attributes: area.attributes,
+      });
       areas.push(
         measure({
           ...area,
-          outer: area.outer.map((c) => ({ ...c, name: area.name, sourceFile: name })),
-          holes: area.holes.map((h) =>
-            h.map((c) => ({ ...c, name: area.name, sourceFile: name })),
-          ),
+          outer: area.outer.map(asCorner),
+          holes: area.holes.map((h) => h.map(asCorner)),
           sourceFile: name,
         }),
       );

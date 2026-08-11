@@ -102,7 +102,7 @@ test("every column sits in the same band on both sides", () => {
 test("the column comparison is looking at a real table", () => {
   // Two empty lists also agree. This is what stops the four tests above from
   // passing because the fixture arrived empty or the module exported nothing.
-  assert.ok(COLUMNS.length >= 23, `only ${COLUMNS.length} columns`);
+  assert.ok(COLUMNS.length >= 24, `only ${COLUMNS.length} columns`);
   for (const [what, list] of Object.entries({
     headers: table.headers,
     kinds: table.kinds,
@@ -185,4 +185,15 @@ test("the row comparison is looking at real points", () => {
 
   const altitudes = new Set(table.points.map((p) => p.alt));
   assert.ok(altitudes.has(null) && altitudes.size > 2, "altitude is barely varied");
+
+  // The Attributes column is a string either side copies straight through, so
+  // it only proves anything while some of those strings are not empty -- and
+  // while at least one holds the escapes, which is where a row builder that
+  // dropped or re-escaped the cell would show up.
+  const attributes = table.points.map((p) => p.attributes);
+  assert.ok(attributes.some((a) => a === ""), "no point without attributes");
+  assert.ok(
+    attributes.some((a) => a.includes("\\;") || a.includes("\\=")),
+    "no point carries an escaped attribute",
+  );
 });

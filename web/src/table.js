@@ -56,6 +56,9 @@ export const COLUMNS = [
   { header: "S", kind: "number", band: SEPARATED, numberFormat: "0.00", fill: "E2EFDA" },
 
   { header: "Description", kind: "text", band: DETAILS, fill: "D9D9D9" },
+  // Beside Description, because it is the other thing a placemark says about
+  // itself in words rather than in coordinates.
+  { header: "Attributes", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lat (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "Lon (DDM)", kind: "text", band: DETAILS, fill: "D9D9D9" },
   { header: "UTM Zone", kind: "text", band: DETAILS, fill: "D9D9D9" },
@@ -116,6 +119,7 @@ export function rowFor(index, point) {
     lon.minutes,
     lon.seconds,
     point.description,
+    point.attributes,
     formatDdm(point.lat, "lat"),
     formatDdm(point.lon, "lon"),
     utm ? `${utm.zone}${utm.band}` : "",

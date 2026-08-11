@@ -47,6 +47,7 @@ test("the parser finds the same points Python finds", () => {
         lon: p.lon,
         lat: p.lat,
         alt: p.alt,
+        attributes: p.attributes,
       })),
       expected.points,
       `${name}: different points`,
@@ -66,13 +67,60 @@ test("the parser finds the same areas Python finds", () => {
       result.areas.map((area) => ({
         name: area.name,
         description: area.description,
+        attributes: area.attributes,
         outer: area.outer.map(corner),
         holes: area.holes.map((hole) => hole.map(corner)),
       })),
       expected.areas,
       `${name}: different areas`,
     );
+
+    // A corner row on the Areas sheet is the area's placemark, so it carries
+    // the area's attributes. Asserted here rather than compared, because
+    // Python records a corner as coordinates alone.
+    for (const area of result.areas) {
+      const corners = [area.outer, ...area.holes].flat();
+      assert.ok(
+        corners.every((c) => c.attributes === area.attributes),
+        `${name}: a corner of ${area.name} lost the area's attributes`,
+      );
+    }
   }
+});
+
+test("the parser reads the same ExtendedData Python reads", () => {
+  for (const { label, kml, attributes } of fixtures.extendedData) {
+    const result = parseDocument(kml, "extended.kml");
+    assert.equal(result.points.length, 1, `${label}: the placemark went missing`);
+    assert.equal(result.points[0].attributes, attributes, label);
+  }
+});
+
+test("the two escaping rules are the same rule", () => {
+  // The comparison above passes on two implementations that both escape
+  // nothing, so this is what pins the escaping itself: every character the
+  // joined form is built from has to be reachable, and the pair of attribute
+  // sets that collides without escaping has to come out as two strings.
+  const cases = new Map(fixtures.extendedData.map((c) => [c.label, c.attributes]));
+  assert.ok(cases.size > 20, `only ${cases.size} ExtendedData cases`);
+
+  const all = [...cases.values()].join("|");
+  for (const [what, escaped] of Object.entries({
+    semicolon: "\\;",
+    equals: "\\=",
+    backslash: "\\\\",
+  })) {
+    assert.ok(all.includes(escaped), `no case produces an escaped ${what}`);
+  }
+
+  const collides = cases.get("one pair whose value reads like two");
+  const distinct = cases.get("the two pairs it would collide with");
+  assert.ok(collides && distinct, "the colliding pair is not in the fixture any more");
+  assert.notEqual(
+    collides,
+    distinct,
+    "one attribute holding both separators flattens to the same cell as two attributes",
+  );
 });
 
 test("the parser skips the same features Python skips", () => {
@@ -115,6 +163,21 @@ test("the cross-check is looking at real documents", () => {
   assert.ok(
     parsed.some((point) => point.name === "Echo cluster"),
     "the MultiGeometry point was not found",
+  );
+
+  // Both ExtendedData forms, each reached through the parser: <Data> on a
+  // point in nested.kml, <SchemaData> on one inside the KMZ.
+  assert.ok(
+    parsed.some((point) => point.attributes.startsWith("Plot ID=A-12")),
+    "the Data form is not being read",
+  );
+  assert.ok(
+    parsed.some((point) => point.attributes.includes("Surveyor=Hopper")),
+    "the SchemaData form is not being read",
+  );
+  assert.ok(
+    parsed.some((point) => point.attributes === ""),
+    "every sample point carries attributes, so an empty cell is untested",
   );
 });
 

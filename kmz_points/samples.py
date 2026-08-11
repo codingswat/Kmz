@@ -2,7 +2,8 @@
 
 Exercises the cases that break naive parsers: folder nesting, CDATA/HTML
 descriptions, mixed geometry, MultiGeometry, altitudes, southern/western
-coordinates, and a zipped KMZ.
+coordinates, both forms of ExtendedData -- including values holding the
+characters the Attributes cell is joined with -- and a zipped KMZ.
 
 Totals: 7 points, 2 non-point features.
 """
@@ -39,6 +40,12 @@ NESTED_KML = """<?xml version="1.0" encoding="UTF-8"?>
       <Placemark>
         <name>Charlie</name>
         <description><![CDATA[<b>Rich</b> text with a <a href="http://example.test">link</a><br/>and a second line]]></description>
+        <ExtendedData>
+          <!-- displayName is presentation; the name attribute is the key. -->
+          <Data name="Plot ID"><displayName>Plot</displayName><value>A-12</value></Data>
+          <Data name="Owner"><value>Ada; Grace</value></Data>
+          <Data name="Note"><value>first line&#10;second line</value></Data>
+        </ExtendedData>
         <Point><coordinates>151.215297,-33.856784,58</coordinates></Point>
       </Placemark>
       <Folder>
@@ -65,6 +72,10 @@ NESTED_KML = """<?xml version="1.0" encoding="UTF-8"?>
       <Placemark>
         <name>An area</name>
         <description>A square kilometre with a courtyard cut out of it</description>
+        <ExtendedData>
+          <Data name="Ref"><value>plot=12</value></Data>
+          <Data name="Path"><value>C:\\plots</value></Data>
+        </ExtendedData>
         <Polygon>
           <outerBoundaryIs><LinearRing>
             <coordinates>
@@ -93,6 +104,12 @@ KMZ_DOC_KML = """<?xml version="1.0" encoding="UTF-8"?>
     <Placemark>
       <name>Foxtrot</name>
       <description>Inside a KMZ</description>
+      <ExtendedData>
+        <SchemaData schemaUrl="#survey">
+          <SimpleData name="Surveyor">Hopper</SimpleData>
+          <SimpleData name="Depth (m)">12.5</SimpleData>
+        </SchemaData>
+      </ExtendedData>
       <Point><coordinates>139.691706,35.689487,40</coordinates></Point>
     </Placemark>
     <Placemark>

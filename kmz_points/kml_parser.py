@@ -8,6 +8,8 @@ parser silently returns zero points.
 
 from __future__ import annotations
 
+import re
+
 from lxml import etree, html
 
 from kmz_points.models import Area, ParseResult, Point
@@ -54,6 +56,74 @@ def _plain_text(raw: str | None) -> str:
     return " ".join(fragment.text_content().split())
 
 
+_BREAKS_AND_TABS = re.compile(r"[\t\r\n]+")
+
+
+def _escape_attribute(text: str) -> str:
+    """Make one key or value safe to join with ``=`` and ``"; "``.
+
+    Without this a value holding a semicolon reads as two pairs and a value
+    holding an equals sign moves the boundary between key and value, so two
+    different attribute sets could flatten to the same cell. The backslash is
+    escaped first: doing it last would double the ones the other two rules had
+    just added.
+
+    A cell is one line, so tabs and newlines become a space rather than
+    something a reader has to widen the row to see.
+    """
+    cleaned = _BREAKS_AND_TABS.sub(" ", text).strip(" ")
+    return cleaned.replace("\\", "\\\\").replace("=", "\\=").replace(";", "\\;")
+
+
+def _element_text(element) -> str:
+    """All the text inside an element, as a browser's textContent gives it.
+
+    ``.text`` alone stops at the first child element, which the port has no
+    equivalent of -- and the two have to agree on the same string.
+    """
+    return "".join(element.itertext())
+
+
+def _extended_data(placemark) -> str:
+    """A placemark's ExtendedData flattened into one cell's worth of text.
+
+    Two forms are read, both keyed on the ``name`` ATTRIBUTE:
+
+        <ExtendedData><Data name="k"><value>v</value></Data></ExtendedData>
+        <ExtendedData><SchemaData><SimpleData name="k">v</SimpleData>…
+
+    A <Data> may also carry a <displayName>. That is presentation and may
+    repeat between two different fields, so it makes a poor key and is not
+    used as one.
+
+    Untyped namespaced children -- <ExtendedData><ns:foo>v</ns:foo></…> -- are
+    deliberately not read. There is no agreed key for them, and reading them
+    would put arbitrary vendor XML into a spreadsheet cell.
+    """
+    extended = _find_child(placemark, "ExtendedData")
+    if extended is None:
+        return ""
+
+    pairs = []
+    for element in extended.iter():  # document order, both forms interleaved
+        local = _local_name(element)
+        if local == "Data":
+            value = _find_child(element, "value")
+            text = _element_text(value) if value is not None else ""
+        elif local == "SimpleData":
+            text = _element_text(element)
+        else:
+            continue
+
+        key = element.get("name")
+        # Nothing to label the value with, so there is no pair to write.
+        if key is None:
+            continue
+        pairs.append(f"{_escape_attribute(key)}={_escape_attribute(text)}")
+
+    return "; ".join(pairs)
+
+
 def _parse_coordinate_tuple(text: str | None) -> tuple[float, float, float | None]:
     """Parse a KML ``lon,lat[,alt]`` triple. Raises ValueError if unusable."""
     if not text or not text.strip():
@@ -88,8 +158,12 @@ def _parse_coordinate_list(text: str | None) -> list[tuple[float, float, float |
     return corners
 
 
-def _ring_corners(boundary, name: str, source_file: str) -> list[Point]:
-    """The Points of a LinearRing inside an outer/inner boundary element."""
+def _ring_corners(boundary, name: str, attributes: str, source_file: str) -> list[Point]:
+    """The Points of a LinearRing inside an outer/inner boundary element.
+
+    A corner carries the area's attributes: they describe the placemark the
+    ring belongs to, and a corner row on the Areas sheet is that placemark.
+    """
     corners: list[Point] = []
     for ring in _find_descendants(boundary, "LinearRing"):
         coordinates = _find_child(ring, "coordinates")
@@ -103,23 +177,26 @@ def _ring_corners(boundary, name: str, source_file: str) -> list[Point]:
                     lat=lat,
                     alt=alt,
                     source_file=source_file,
+                    attributes=attributes,
                 )
             )
     return corners
 
 
-def _parse_polygon(polygon, name: str, description: str, source_file: str) -> Area | None:
+def _parse_polygon(
+    polygon, name: str, description: str, attributes: str, source_file: str
+) -> Area | None:
     """One Polygon element as an Area, or None if it has no usable outline."""
     outer: list[Point] = []
     for boundary in _find_descendants(polygon, "outerBoundaryIs"):
-        outer.extend(_ring_corners(boundary, name, source_file))
+        outer.extend(_ring_corners(boundary, name, attributes, source_file))
 
     if not outer:
         return None
 
     holes = []
     for boundary in _find_descendants(polygon, "innerBoundaryIs"):
-        corners = _ring_corners(boundary, name, source_file)
+        corners = _ring_corners(boundary, name, attributes, source_file)
         if corners:
             holes.append(corners)
 
@@ -129,6 +206,7 @@ def _parse_polygon(polygon, name: str, description: str, source_file: str) -> Ar
         outer=outer,
         holes=holes,
         source_file=source_file,
+        attributes=attributes,
     )
 
 
@@ -175,12 +253,14 @@ def parse_document(data: bytes, source_file: str) -> ParseResult:
             description_element.text if description_element is not None else None
         )
 
+        attributes = _extended_data(placemark)
+
         for geometry in placemark.iter():
             if _local_name(geometry) in _NON_POINT_GEOMETRY:
                 result.skipped += 1
 
         for polygon in _find_descendants(placemark, "Polygon"):
-            area = _parse_polygon(polygon, name, description, source_file)
+            area = _parse_polygon(polygon, name, description, attributes, source_file)
             if area is None:
                 label = name or "<unnamed>"
                 result.warnings.append(
@@ -207,6 +287,7 @@ def parse_document(data: bytes, source_file: str) -> ParseResult:
                     lat=lat,
                     alt=alt,
                     source_file=source_file,
+                    attributes=attributes,
                 )
             )
 

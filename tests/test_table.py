@@ -3,7 +3,7 @@
 The column layout lives in one place so it can be re-ordered later; these
 tests pin the contract that layout has to satisfy.
 
-The sheet now has 23 columns split into four labelled bands (separation,
+The sheet now has 24 columns split into four labelled bands (separation,
 Combined D,M,S, separated D,M,S, details), and several headers repeat across
 bands -- "longitude"/"latitude" appear in both the separation and Combined
 bands, and "D"/"M"/"S" appear twice within the separated band, once for
@@ -24,7 +24,7 @@ from kmz_points.table import (
 )
 
 # Mirrors COLUMNS exactly, duplicates included, so test_headers_match_the_
-# specified_layout pins the full 23-column order without importing COLUMNS
+# specified_layout pins the full 24-column order without importing COLUMNS
 # itself.
 EXPECTED_HEADERS = [
     "Name",
@@ -43,6 +43,7 @@ EXPECTED_HEADERS = [
     "M",
     "S",
     "Description",
+    "Attributes",
     "Lat (DDM)",
     "Lon (DDM)",
     "UTM Zone",
@@ -53,7 +54,14 @@ EXPECTED_HEADERS = [
 ]
 
 
-def make_point(lat=34.567890, lon=38.123456, alt=120.5, name="Alpha", source="a.kml"):
+def make_point(
+    lat=34.567890,
+    lon=38.123456,
+    alt=120.5,
+    name="Alpha",
+    source="a.kml",
+    attributes="",
+):
     return Point(
         name=name,
         description="desc",
@@ -61,6 +69,7 @@ def make_point(lat=34.567890, lon=38.123456, alt=120.5, name="Alpha", source="a.
         lat=lat,
         alt=alt,
         source_file=source,
+        attributes=attributes,
     )
 
 
@@ -93,6 +102,29 @@ class TestRowValues:
         row = build_table_rows([make_point(name="Alpha", source="b.kmz")])[0]
         assert row[column_index("Name")] == "Alpha"
         assert row[column_index("Source File")] == "b.kmz"
+
+
+class TestAttributes:
+    """ExtendedData reaches the sheet already flattened, so the row builder
+    only has to place it. The column it is placed in is the interesting part:
+    both row builders emit positional arrays, so a cell in the wrong place
+    shifts every column after it."""
+
+    def test_the_flattened_extended_data_is_carried_through(self):
+        row = build_table_rows([make_point(attributes="k=v; j=w")])[0]
+        assert row[column_index("Attributes")] == "k=v; j=w"
+
+    def test_a_placemark_with_no_extended_data_leaves_an_empty_cell(self):
+        row = build_table_rows([make_point()])[0]
+        assert row[column_index("Attributes")] == ""
+
+    def test_it_sits_immediately_after_description(self):
+        assert column_index("Attributes") == column_index("Description") + 1
+
+    def test_it_does_not_displace_the_columns_after_it(self):
+        row = build_table_rows([make_point(attributes="k=v")])[0]
+        assert row[column_index("Lat (DDM)")] == "34° 34.0734' N"
+        assert row[column_index("Source File")] == "a.kml"
 
 
 class TestNumericCells:

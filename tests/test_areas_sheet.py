@@ -1,6 +1,6 @@
 """The Areas sheet.
 
-Same three header rows and same 23 columns as Points, so corners read
+Same three header rows and same 24 columns as Points, so corners read
 identically. Each area is a banner carrying its size, then its outer corners,
 then a lighter sub-banner and corners for each hole.
 """
@@ -22,26 +22,35 @@ from kmz_points.table import (
 )
 
 
-def corner(lat, lon, name="Plot"):
-    return Point(name=name, description="", lon=lon, lat=lat, alt=None, source_file="a.kml")
+def corner(lat, lon, name="Plot", attributes=""):
+    return Point(
+        name=name,
+        description="",
+        lon=lon,
+        lat=lat,
+        alt=None,
+        source_file="a.kml",
+        attributes=attributes,
+    )
 
 
-def box(lat, lon, size, name="Plot"):
+def box(lat, lon, size, name="Plot", attributes=""):
     return [
-        corner(lat, lon, name),
-        corner(lat, lon + size, name),
-        corner(lat + size, lon + size, name),
-        corner(lat + size, lon, name),
+        corner(lat, lon, name, attributes),
+        corner(lat, lon + size, name, attributes),
+        corner(lat + size, lon + size, name, attributes),
+        corner(lat + size, lon, name, attributes),
     ]
 
 
-def make_area(name="Plot 12", lat=10.0, lon=30.0, size=0.01, holes=()):
+def make_area(name="Plot 12", lat=10.0, lon=30.0, size=0.01, holes=(), attributes=""):
     return Area(
         name=name,
         description="",
-        outer=box(lat, lon, size, name),
+        outer=box(lat, lon, size, name, attributes),
         holes=[list(h) for h in holes],
         source_file="a.kml",
+        attributes=attributes,
     )
 
 
@@ -136,6 +145,37 @@ class TestCorners:
         # data_rows keys off the numbered column, which banners leave empty.
         sheet = write([make_area(), make_area("Other", lat=20.0)])["Areas"]
         assert len(data_rows(sheet)) == 8
+
+
+class TestCornerAttributes:
+    """A corner is the area's placemark, so it carries the area's attributes.
+
+    The Description column on this sheet is blank on every row because the
+    parser builds corners with description="" -- worth naming, because the
+    Attributes column deliberately does not repeat it."""
+
+    def test_every_corner_row_carries_them(self):
+        area = make_area(attributes="owner=Ada; ref=plot\\=12")
+        sheet = write([area])["Areas"]
+        column = column_index("Attributes")
+        values = [row[column].value for row in data_rows(sheet)]
+        assert values == ["owner=Ada; ref=plot\\=12"] * 4
+
+    def test_a_hole_corner_carries_them_too(self):
+        attributes = "owner=Ada"
+        area = make_area(
+            size=0.02,
+            holes=[box(10.005, 30.005, 0.005, "Plot", attributes)],
+            attributes=attributes,
+        )
+        sheet = write([area])["Areas"]
+        column = column_index("Attributes")
+        assert {row[column].value for row in data_rows(sheet)} == {attributes}
+
+    def test_an_area_without_any_leaves_the_cell_empty(self):
+        sheet = write([make_area()])["Areas"]
+        column = column_index("Attributes")
+        assert {row[column].value for row in data_rows(sheet)} == {None}
 
 
 class TestHoles:

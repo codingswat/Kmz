@@ -33,6 +33,7 @@ from kmz_points.table import (
 
 def make_point(
     alt=120.5,
+    attributes="",
     description="desc",
     lat=34.567890,
     lon=38.123456,
@@ -46,6 +47,7 @@ def make_point(
         lat=lat,
         alt=alt,
         source_file=source,
+        attributes=attributes,
     )
 
 
@@ -205,6 +207,15 @@ class TestFormulaInjection:
         cell = first_data_row(sheet)[column_index("Name")]
         assert cell.data_type != "f"
         assert cell.value.startswith("'=")
+
+    def test_an_attributes_cell_beginning_with_equals_lands_as_text(self, tmp_path):
+        # A <Data name=""> is a key of nothing, which flattens to "=value" --
+        # a cell that starts with the one character openpyxl reads as a
+        # formula, built entirely from someone else's file.
+        sheet = write_and_reopen(tmp_path, [make_point(attributes="=v")]).active
+        cell = first_data_row(sheet)[column_index("Attributes")]
+        assert cell.data_type != "f"
+        assert cell.value == "'=v"
 
     def test_an_ordinary_name_is_unchanged(self, tmp_path):
         sheet = write_and_reopen(tmp_path, [make_point(name="Alpha")]).active

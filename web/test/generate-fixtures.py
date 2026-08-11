@@ -34,6 +34,7 @@ from kmz_points.geometry import (  # noqa: E402
     Measurement,
     polygon_area,
 )
+from kmz_points.kml_parser import parse_document  # noqa: E402
 from kmz_points.models import Area, Point  # noqa: E402
 from kmz_points.pipeline import export_to_excel, load_file  # noqa: E402
 from kmz_points.samples import write_samples  # noqa: E402
@@ -76,6 +77,147 @@ AWKWARD_COORDINATES = [
     (-85.0, -20.0),            # the western half of the southern cap
     (-90.0, 0.0),              # the south pole
 ]
+
+
+# One Placemark, one Point, and whatever ExtendedData a case is about. The
+# vendor namespace is declared here because the untyped-children case needs a
+# bound prefix to be well-formed XML at all.
+_EXTENDED_DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:ex="http://example.test/ext">
+  <Document>
+    <Placemark>
+      <name>Case</name>
+{extended}
+      <Point><coordinates>1.0,2.0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>
+"""
+
+# label, ExtendedData. Every case is well-formed XML on purpose: lxml recovers
+# from damage and a browser refuses it, so the two only have a shared answer
+# where the document parses. What a damaged one does is Python's own test.
+_EXTENDED_DATA = [
+    ("the Data form", '<ExtendedData><Data name="k"><value>v</value></Data></ExtendedData>'),
+    (
+        "the SchemaData form",
+        '<ExtendedData><SchemaData schemaUrl="#s">'
+        '<SimpleData name="a">1</SimpleData>'
+        '<SimpleData name="b">2</SimpleData>'
+        "</SchemaData></ExtendedData>",
+    ),
+    (
+        "both forms, interleaved, in document order",
+        '<ExtendedData><Data name="first"><value>1</value></Data>'
+        '<SchemaData schemaUrl="#s"><SimpleData name="second">2</SimpleData></SchemaData>'
+        '<Data name="third"><value>3</value></Data></ExtendedData>',
+    ),
+    (
+        "displayName is presentation, not the key",
+        '<ExtendedData><Data name="plot_id">'
+        "<displayName>Plot number</displayName><value>A-12</value>"
+        "</Data></ExtendedData>",
+    ),
+    (
+        "a value holding the pair separator",
+        '<ExtendedData><Data name="k"><value>a; b</value></Data></ExtendedData>',
+    ),
+    (
+        "a value holding the key separator",
+        '<ExtendedData><Data name="k"><value>a=b</value></Data></ExtendedData>',
+    ),
+    (
+        "a value holding a backslash",
+        '<ExtendedData><Data name="k"><value>C:\\plots</value></Data></ExtendedData>',
+    ),
+    (
+        "a value already holding what an escape looks like",
+        '<ExtendedData><Data name="k"><value>a\\;b</value></Data></ExtendedData>',
+    ),
+    (
+        "the key is escaped as well as the value",
+        '<ExtendedData><Data name="a;b=c"><value>v</value></Data></ExtendedData>',
+    ),
+    # The pair that collides without escaping: one attribute whose value holds
+    # both separators, against two attributes that do not.
+    (
+        "one pair whose value reads like two",
+        '<ExtendedData><Data name="a"><value>b; c=d</value></Data></ExtendedData>',
+    ),
+    (
+        "the two pairs it would collide with",
+        '<ExtendedData><Data name="a"><value>b</value></Data>'
+        '<Data name="c"><value>d</value></Data></ExtendedData>',
+    ),
+    (
+        "a newline and a tab in a value",
+        '<ExtendedData><Data name="k"><value>one&#10;two&#9;three</value></Data></ExtendedData>',
+    ),
+    (
+        "the indentation a pretty-printed file puts round a value",
+        '<ExtendedData>\n<Data name="k">\n<value>\n          v\n        </value>\n'
+        "</Data>\n</ExtendedData>",
+    ),
+    ("an ExtendedData with nothing in it", "<ExtendedData></ExtendedData>"),
+    (
+        "a Data with no value element",
+        '<ExtendedData><Data name="k"></Data></ExtendedData>',
+    ),
+    (
+        "a Data with no name attribute",
+        "<ExtendedData><Data><value>v</value></Data>"
+        '<Data name="k"><value>v</value></Data></ExtendedData>',
+    ),
+    (
+        "an empty name attribute is still a key",
+        '<ExtendedData><Data name=""><value>v</value></Data></ExtendedData>',
+    ),
+    (
+        "the same key twice",
+        '<ExtendedData><Data name="k"><value>1</value></Data>'
+        '<Data name="k"><value>2</value></Data></ExtendedData>',
+    ),
+    (
+        "untyped vendor children are not read",
+        "<ExtendedData><ex:cost>42</ex:cost>"
+        '<Data name="k"><value>v</value></Data></ExtendedData>',
+    ),
+    (
+        "a SimpleData outside any SchemaData",
+        '<ExtendedData><SimpleData name="k">v</SimpleData></ExtendedData>',
+    ),
+    (
+        "markup inside a value",
+        '<ExtendedData><Data name="k"><value>a<b>c</b>d</value></Data></ExtendedData>',
+    ),
+    (
+        "CDATA inside a value",
+        '<ExtendedData><Data name="k"><value><![CDATA[a; b]]></value></Data></ExtendedData>',
+    ),
+    ("no ExtendedData at all", ""),
+]
+
+
+def extended_data_cases():
+    """ExtendedData, and the exact Attributes cell Python makes of each one.
+
+    The sample documents cover the ordinary case end to end. These are the
+    ones no sample file has any business carrying -- a key with a semicolon in
+    it, a <Data> with no name attribute, vendor XML nobody agreed a meaning
+    for -- and they are where the two escaping rules are actually compared.
+    """
+    cases = []
+    for label, extended in _EXTENDED_DATA:
+        document = _EXTENDED_DOCUMENT.format(extended=extended)
+        parsed = parse_document(document.encode("utf-8"), "extended.kml")
+        cases.append(
+            {
+                "label": label,
+                "kml": document,
+                "attributes": parsed.points[0].attributes,
+            }
+        )
+    return cases
 
 
 def coordinate_cases():
@@ -329,12 +471,16 @@ def table_points(documents, coordinates):
     "north pole" is easier to place than one that reads "case 37".
     """
     points = [
-        Point(p["name"], p["description"], p["lon"], p["lat"], p["alt"], name)
+        Point(
+            p["name"], p["description"], p["lon"], p["lat"], p["alt"], name, p["attributes"]
+        )
         for name, document in documents.items()
         for p in document["points"]
     ]
+    # A corner carries the area's attributes, which is what puts a non-empty
+    # Attributes cell on the Areas sheet for both sides to compare.
     points += [
-        Point(area["name"], "", c["lon"], c["lat"], c["alt"], name)
+        Point(area["name"], "", c["lon"], c["lat"], c["alt"], name, area["attributes"])
         for name, document in documents.items()
         for area in document["areas"]
         for c in area["outer"]
@@ -352,6 +498,10 @@ def table_points(documents, coordinates):
             case["lat"],
             None if index % 2 else index * 1.5,
             "spread.kml",
+            # Already escaped, as the parser hands them over: the row builder
+            # only has to put the string in the right column, and the column
+            # after it moves if it does not.
+            "" if index % 4 else f"case={index}; note=a\\; b",
         )
         for index, case in enumerate(spread)
     ]
@@ -385,6 +535,7 @@ def table_facts(documents, coordinates):
                 "lat": p.lat,
                 "alt": p.alt,
                 "sourceFile": p.source_file,
+                "attributes": p.attributes,
             }
             for p in points
         ],
@@ -399,7 +550,6 @@ def sample_batch():
     paths = sorted(write_samples(workspace / "in"), key=lambda p: order[p.name])
 
     from kmz_points.archive import read_kml_bytes
-    from kmz_points.kml_parser import parse_document
 
     documents = {}
     for path in paths:
@@ -418,6 +568,7 @@ def sample_batch():
                     "lon": p.lon,
                     "lat": p.lat,
                     "alt": p.alt,
+                    "attributes": p.attributes,
                 }
                 for p in parsed.points
             ],
@@ -425,6 +576,7 @@ def sample_batch():
                 {
                     "name": a.name,
                     "description": a.description,
+                    "attributes": a.attributes,
                     "outer": [{"lon": c.lon, "lat": c.lat, "alt": c.alt} for c in a.outer],
                     "holes": [
                         [{"lon": c.lon, "lat": c.lat, "alt": c.alt} for c in h]
@@ -468,6 +620,7 @@ if __name__ == "__main__":
                 "coordinates": coordinates,
                 "areas": areas,
                 "batch": batch,
+                "extendedData": extended_data_cases(),
                 "table": table_facts(batch["documents"], coordinates),
                 # One banner per area case, in the same order, plus the ones
                 # whose numbers were chosen rather than measured.

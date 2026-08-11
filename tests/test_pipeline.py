@@ -134,9 +134,10 @@ class TestEndToEnd:
     def test_no_mandatory_cell_is_left_empty(self, samples, tmp_path):
         summary = run(samples, tmp_path / "out")
         sheet = openpyxl.load_workbook(summary.output_path).active
-        # Elevation and Description are legitimately optional; everything
-        # else must be populated for every row.
-        optional = {"elevation", "Description"}
+        # Elevation, Description and Attributes are legitimately optional --
+        # a placemark need carry none of the three; everything else must be
+        # populated for every row.
+        optional = {"elevation", "Description", "Attributes"}
         required = [i for i, h in enumerate(headers()) if h not in optional]
         for row in data_rows(sheet):
             for index in required:

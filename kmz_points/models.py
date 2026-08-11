@@ -11,6 +11,11 @@ class Point:
 
     ``lon``/``lat`` are stored in the order KML uses them, not the order they
     are displayed in.
+
+    ``attributes`` is the placemark's ExtendedData already flattened to one
+    string rather than a dict: this is a frozen dataclass, and the flattening
+    rule has to be character-for-character identical in the browser port
+    anyway, so it belongs at the parser rather than at each of two writers.
     """
 
     name: str
@@ -19,6 +24,9 @@ class Point:
     lat: float
     alt: float | None
     source_file: str
+    # Defaulted so the positional construction every caller already uses keeps
+    # working without an attribute to hand.
+    attributes: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,6 +43,7 @@ class Area:
     outer: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
     source_file: str = ""
+    attributes: str = ""
 
     @property
     def corner_count(self) -> int:

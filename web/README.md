@@ -86,15 +86,16 @@ stale reference.
 `src/kml.js` needs a DOM and Node has none, and this project has no
 `package.json` and no `node_modules` on purpose. `test/kml.test.mjs` runs it
 against `test/dom-shim.mjs`, a hand-written XML reader — and a much smaller
-HTML one — sufficient for the three sample documents and nothing beyond them.
+HTML one — sufficient for the sample documents and the ExtendedData cases, and
+nothing beyond them.
 
 That is worth being precise about, because it is easy to over-read:
 
 - It **does** check `kml.js` against Python: which elements it walks, how it
   matches a local name, what it counts as skipped, how it pairs a Polygon's
-  outer ring with its holes, and how it reduces a CDATA description to plain
-  text. That is the hand-maintained port logic, and it had no coverage at all
-  before.
+  outer ring with its holes, how it reduces a CDATA description to plain text,
+  and which `ExtendedData` it reads and how it escapes what it finds. That is
+  the hand-maintained port logic, and it had no coverage at all before.
 - It **does not** check that a browser's DOM behaves like the shim. It
   implements no HTML implied end tags, no namespace URIs, no DTDs, and no CSS
   selectors beyond bare tag names. Anything outside that it throws on rather
@@ -144,12 +145,13 @@ Yes, checked at every level rather than assumed:
 | UTM, UPS and MGRS, 485 coordinates | 0 mismatches, exact to the metre |
 | Area measurement, 136 shapes | 0 mismatches (worst 0.0007 m², float noise) |
 | Refusal wording, all 6 reasons | identical, and each one reached by a shape |
-| The 23 columns | header, kind, number format and band all identical |
+| The 24 columns | header, kind, number format and band all identical |
 | Table rows, 85 points | every cell identical |
 | Area banner text, 136 + 23 areas | identical, including the numbers |
 | KMZ extraction | byte-identical to Python's `zipfile` |
-| KML parsing, real samples | points, areas, descriptions and skipped counts all match |
-| **The finished workbook** | **410 cells, 0 mismatches** — value, type and number format, plus sheets, merges, widths and freeze panes |
+| KML parsing, real samples | points, areas, descriptions, ExtendedData and skipped counts all match |
+| ExtendedData, 23 documents | the same Attributes cell, escaping included |
+| **The finished workbook** | **423 cells, 0 mismatches** — value, type and number format, plus sheets, merges, widths and freeze panes |
 
 The last row is the one that matters: the same three sample files through both
 implementations produce workbooks a reader could not tell apart. Not the same
@@ -169,7 +171,7 @@ alignment are deliberately outside that; see `kmz_points/workbook_facts.py`.
 | `src/unzip.js` | ZIP reader, with the decompression-bomb cap |
 | `src/geometry.js` | Area measurement |
 | `src/convert.js` | Coordinate conversions, including UTM and MGRS |
-| `src/table.js` | The 23 columns and five bands |
+| `src/table.js` | The 24 columns and five bands |
 | `src/workbook.js` | The banded layout, banners and sheets |
 | `src/xlsx.js` | Workbook writer: styles, merges, sheets |
 | `src/zip.js` | Minimal ZIP writer |
