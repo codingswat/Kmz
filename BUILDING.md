@@ -29,7 +29,7 @@ Paste these one at a time:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt pyinstaller
+pip install -e ".[gui,web,dev]" pyinstaller
 pyinstaller build.spec --noconfirm
 ```
 
@@ -81,7 +81,7 @@ Paste these one at a time:
 ```
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt pyinstaller
+pip install -e ".[gui,web,dev]" pyinstaller
 pyinstaller build.spec --noconfirm
 ```
 
@@ -108,7 +108,7 @@ On your Mac:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[web]"
 KMZ_PASSWORD='pick-something' python serve.py
 ```
 

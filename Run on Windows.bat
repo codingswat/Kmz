@@ -33,7 +33,7 @@ if not exist ".venv\Scripts\python.exe" (
         exit /b 1
     )
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
-    ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+    ".venv\Scripts\python.exe" -m pip install -e ".[gui]"
     if errorlevel 1 (
         echo.
         echo Could not install the requirements. The message above says why.

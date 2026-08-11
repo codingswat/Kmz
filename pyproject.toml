@@ -1,3 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kmz-points"
+version = "1.1.0"
+description = "Pull every point and area out of KML/KMZ files into one Excel workbook"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "lxml>=5.0",       # KML parsing
+    "utm>=0.7",        # UTM easting/northing + latitude band
+    "openpyxl>=3.1",   # Excel output
+    "mgrs>=1.4",       # MGRS grid references
+    # mgrs.core imports packaging at runtime without declaring it, so
+    # installing mgrs alone fails with ModuleNotFoundError.
+    "packaging>=23.0",
+]
+
+[project.optional-dependencies]
+# Drag-and-drop. The GUI falls back to the Browse button when this is missing
+# or the platform's tkdnd library will not load, so it is genuinely optional.
+gui = ["tkinterdnd2>=0.4"]
+# Only serve.py needs these. The desktop app never imports Flask and
+# build.spec excludes it, waitress and their dependencies from the bundle.
+web = ["flask>=3.0", "waitress>=3.0"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.16",
+    "mypy>=1.8",
+    # tomllib is stdlib from 3.11; tests/test_packaging.py needs a TOML parser
+    # on the 3.10 floor too.
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+kmz-points = "kmz_points.cli:main"
+
+[project.gui-scripts]
+# gui-scripts, not scripts: on Windows this produces a launcher with no
+# console window behind the app.
+kmz-points-gui = "kmz_points.gui:main"
+
+[tool.setuptools]
+packages = ["kmz_points"]
+
 [tool.ruff]
 # 100, not the default 88. At 88 fourteen existing lines violate; at 100 only
 # two do, and both are KML fixtures that must not be rewrapped. The codebase

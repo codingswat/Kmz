@@ -75,7 +75,7 @@ a = Analysis(
     runtime_hooks=[],
     # Flask and its dependencies belong to serve.py, which is never frozen --
     # only the owner runs the server, colleagues just open a browser. They are
-    # in requirements.txt, so CI installs them before building, and excluding
+    # in the web extra, so CI installs them before building, and excluding
     # them explicitly keeps them out of the bundle rather than relying on
     # run.py's import graph never happening to reach them.
     excludes=[
