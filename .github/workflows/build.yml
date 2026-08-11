@@ -56,6 +56,43 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui,web,dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy kmz_points/
+
+      # The same shape as the kmz-extractor.html staleness check above: a
+      # lockfile nobody regenerates is a lockfile that quietly stops matching
+      # what the project actually declares.
+      - name: Check the release lockfile is current
+        run: |
+          pip install uv
+          uv pip compile --universal --quiet --extra gui --extra web \
+            --output-file /tmp/fresh-release.txt pyproject.toml
+          # Compare the pins only. Both files carry comment headers -- ours
+          # explains the file, uv's records the command -- and neither is what
+          # this check is about.
+          grep -v '^#' requirements-release.txt | grep -v '^$' > /tmp/committed-pins.txt
+          grep -v '^#' /tmp/fresh-release.txt | grep -v '^$' > /tmp/fresh-pins.txt
+          diff -u /tmp/committed-pins.txt /tmp/fresh-pins.txt \
+            || (echo "::error::requirements-release.txt is out of date. Regenerate it with the command in its header and commit it." && exit 1)
+
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -89,8 +126,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[gui,web,dev]"
-          pip install pyinstaller
+          # Pinned, because this job produces the artifact we hand people.
+          # Developers get the flexible floors from pyproject.toml; a release
+          # built from a tag should not depend on what PyPI served that morning.
+          pip install -r requirements-release.txt
+          # The package itself, without re-resolving what the lockfile just fixed.
+          pip install -e . --no-deps
+          pip install pytest pyinstaller
 
       # The Linux runner has no display; the Windows and macOS runners can
       # create Tk windows directly, so the GUI tests run there unwrapped.
@@ -179,11 +221,13 @@ jobs:
 
   release:
     name: Attach to release
-    # Both, not just build. The browser version is part of what ships, and
+    # Three gates, not one. The browser version is part of what ships, and
     # gating only on the binaries would publish a release carrying a broken
     # kmz-extractor.html -- including one built from a stale bundle, which
-    # looks fine and quietly does the old thing.
-    needs: [build, web]
+    # looks fine and quietly does the old thing. Lint joins them because a
+    # release carrying code that does not type-check is one nobody can safely
+    # patch in a hurry.
+    needs: [build, web, lint]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

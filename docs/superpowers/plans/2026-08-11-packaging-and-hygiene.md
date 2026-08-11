@@ -656,14 +656,19 @@ decisions and are left alone."
 
 - [ ] **Step 1: Generate the lockfile**
 
+Use `uv`, not `pip-tools`. pip-tools 7.x imports `pip._internal.utils.compat.stdlib_pkgs`, which pip 26 removed, so `pip-compile` fails on import against a current pip.
+
+`--universal` matters: without it the lockfile is resolved for the machine that generated it, and the same file feeds the Windows, macOS and Linux release jobs.
+
 ```bash
-.venv/bin/pip install --quiet pip-tools
-.venv/bin/pip-compile --extra gui --extra web --output-file requirements-release.txt pyproject.toml
+.venv/bin/pip install --quiet uv
+.venv/bin/uv pip compile --universal --extra gui --extra web \
+  --output-file requirements-release.txt pyproject.toml
 ```
 
 - [ ] **Step 2: Add a header explaining what it is for**
 
-Prepend to `requirements-release.txt`, above pip-compile's own header:
+Prepend to `requirements-release.txt`, above uv's own generated header:
 
 ```
 #
@@ -674,8 +679,12 @@ Prepend to `requirements-release.txt`, above pip-compile's own header:
 # built from a tag six months from now is the same binary, rather than
 # whatever happened to be newest on PyPI that morning.
 #
+# Universal: it carries environment markers rather than being resolved for one
+# platform, because the same file feeds the Windows, macOS and Linux builds.
+#
 # Regenerate with:
-#   pip-compile --extra gui --extra web --output-file requirements-release.txt pyproject.toml
+#   uv pip compile --universal --extra gui --extra web \
+#     --output-file requirements-release.txt pyproject.toml
 #
 ```
 
@@ -753,14 +762,24 @@ and extend the comment above it to name the third gate:
 Add to the `lint` job, after the Mypy step:
 
 ```yaml
+      # The same shape as the kmz-extractor.html staleness check above: a
+      # lockfile nobody regenerates is a lockfile that quietly stops matching
+      # what the project actually declares.
       - name: Check the release lockfile is current
         run: |
-          pip install pip-tools
-          pip-compile --quiet --extra gui --extra web \
-            --output-file /tmp/requirements-release.txt pyproject.toml
-          diff -u requirements-release.txt /tmp/requirements-release.txt \
-            || (echo "::error::requirements-release.txt is out of date. Run pip-compile and commit it." && exit 1)
+          pip install uv
+          uv pip compile --universal --quiet --extra gui --extra web \
+            --output-file /tmp/fresh-release.txt pyproject.toml
+          # Compare the pins only. Both files carry comment headers -- ours
+          # explains the file, uv's records the command -- and neither is what
+          # this check is about.
+          grep -v '^#' requirements-release.txt | grep -v '^$' > /tmp/committed-pins.txt
+          grep -v '^#' /tmp/fresh-release.txt | grep -v '^$' > /tmp/fresh-pins.txt
+          diff -u /tmp/committed-pins.txt /tmp/fresh-pins.txt \
+            || (echo "::error::requirements-release.txt is out of date. Regenerate it with the command in its header and commit it." && exit 1)
 ```
+
+Verify it works in both directions before committing: it must pass against the file you just generated, and it must fail if you append a bogus pin to a copy.
 
 - [ ] **Step 7: Verify the workflow is valid YAML and the jobs are wired**
 
