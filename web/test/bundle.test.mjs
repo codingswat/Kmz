@@ -70,6 +70,21 @@ test("every module made it into the bundle", () => {
   }
 });
 
+test("both versions carry the no-warranty notice", () => {
+  // The tool prints coordinates, areas and distances that someone may act on,
+  // and it is published with no licence warranty behind it. The notice has to
+  // survive the build, so it is checked in the template and in the single
+  // file -- editing one and forgetting the other is the failure to catch.
+  for (const [name, file] of [
+    ["the template", join(web, "index.html")],
+    ["the single file", built],
+  ]) {
+    const html = readFileSync(file, "utf8");
+    assert.match(html, /No warranty\./, `${name} has lost the notice`);
+    assert.match(html, /check them against\s+an authoritative source/, `${name} has lost the advice`);
+  }
+});
+
 test("the page fetches nothing from the network", () => {
   // The tool has to work offline, and a page that phones out is also a page
   // that leaks who is using it. This checks for things the browser would
