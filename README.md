@@ -248,3 +248,8 @@ xvfb-run -a pytest
 
 The column layout is defined once, in `COLUMNS`. Adding or re-ordering a
 column is a change to that list and nothing else.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, change it, ship it; it comes with no
+warranty.
