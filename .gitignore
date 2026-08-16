@@ -28,3 +28,6 @@ web/test/fixtures.json
 
 # macOS Finder metadata, created just by opening a folder in the GUI.
 .DS_Store
+
+# Per-machine Claude Code permissions; not shared.
+.claude/settings.local.json
